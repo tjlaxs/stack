@@ -190,11 +190,11 @@ stack.yaml
 test/Spec.hs
 ```
 
-The `app/Main.hs`, `src/Lib.hs`, and `test/Spec.hs` files are all Haskell source
-files that compose the actual functionality of our project (we won't dwell on
-them here). The `LICENSE` file has no impact on the build, but is there for
-informational/legal purposes only, as well as the `README.md`. The files of interest here
-are `Setup.hs`, `package.yaml`, `helloworld.cabal`, and `stack.yaml`.
+The `app/Main.hs`, `src/Lib.hs`, and `test/Spec.hs` files are all Haskell
+source files that compose the actual functionality of our project (we won't
+dwell on them here). The `LICENSE` file and `README.md` have no impact on the
+build. The files of interest here are `Setup.hs`, `package.yaml`,
+`helloworld.cabal`, and `stack.yaml`.
 
 The `Setup.hs` file is a component of the Cabal build system which stack uses.
 It's technically not needed by stack, but it is still considered good practice
