@@ -229,7 +229,8 @@ Since Stack 1.6.1, the `package.yaml` is an alternative package format that is
 provided built-in by stack through [the hpack tool](https://github.com/sol/hpack). The
 default behaviour is to generate the `.cabal` file from this `package.yaml`, and you
 can see that from the general message header in your new `helloworld.cabal` file. It
-is therefore important to understand that your `package.yaml` drives the package configuration.
+is therefore important to understand that your `package.yaml` drives the package
+configuration and you should not modify the `.cabal` file.
 
 It is also important to remember that stack is built on top of the Cabal build system. Therefore, an
 understanding of the moving parts in Cabal are necessary. In Cabal, we have individual
