@@ -65,6 +65,7 @@ main =
                 gTestHaddocks = True
                 gProjectRoot = "" -- Set to real value velow.
                 gBuildArgs = []
+                gCertificateName = Nothing
                 global0 = foldl (flip id) Global{..} flags
             -- Need to get paths after options since the '--arch' argument can effect them.
             projectRoot' <- getStackPath global0 "project-root"
@@ -114,6 +115,9 @@ options =
             (\v -> Right $ \g -> g{gBuildArgs = gBuildArgs g ++ words v})
             "\"ARG1 ARG2 ...\"")
         "Additional arguments to pass to 'stack build'."
+    , Option "" [certificateNameOptName]
+        (ReqArg (\v -> Right $ \g -> g{gCertificateName = Just v}) "NAME")
+        "Certificate name for code signing on Windows"
     ]
 
 -- | Shake rules.
@@ -211,16 +215,19 @@ rules global@Global{..} args = do
                 -- Windows doesn't have or need a 'strip' command, so skip it.
                 -- Instead, we sign the executable
                 liftIO $ copyFile (releaseBinDir </> binaryName </> stackExeFileName) out
-                actionOnException
-                    (command_ [] "c:\\Program Files\\Microsoft SDKs\\Windows\\v7.1\\Bin\\signtool.exe"
-                        ["sign"
-                        ,"/v"
-                        ,"/d", synopsis gStackPackageDescription
-                        ,"/du", homepage gStackPackageDescription
-                        ,"/n", "FP Complete, Corporation"
-                        ,"/t", "http://timestamp.verisign.com/scripts/timestamp.dll"
-                        ,out])
-                    (removeFile out)
+                case gCertificateName of
+                    Nothing -> return ()
+                    Just certName ->
+                        actionOnException
+                            (command_ [] "c:\\Program Files\\Microsoft SDKs\\Windows\\v7.1\\Bin\\signtool.exe"
+                                ["sign"
+                                ,"/v"
+                                ,"/d", synopsis gStackPackageDescription
+                                ,"/du", homepage gStackPackageDescription
+                                ,"/n", certName
+                                ,"/t", "http://timestamp.verisign.com/scripts/timestamp.dll"
+                                ,out])
+                            (removeFile out)
             Linux ->
                 cmd "strip -p --strip-unneeded --remove-section=.comment -o"
                     [out, releaseBinDir </> binaryName </> stackExeFileName]
@@ -604,6 +611,10 @@ buildArgsOptName = "build-args"
 staticOptName :: String
 staticOptName = "static"
 
+-- | @--certificate-name@ command-line option name.
+certificateNameOptName :: String
+certificateNameOptName = "certificate-name"
+
 -- | Arguments to pass to all 'stack' invocations.
 stackArgs :: Global -> [String]
 stackArgs Global{..} = ["--install-ghc", "--arch=" ++ display gArch]
@@ -655,7 +666,9 @@ data Global = Global
     , gHomeDir :: !FilePath
     , gArch :: !Arch
     , gBinarySuffix :: !String
-    , gUploadLabel :: (Maybe String)
+    , gUploadLabel :: !(Maybe String)
     , gTestHaddocks :: !Bool
-    , gBuildArgs :: [String] }
+    , gBuildArgs :: [String]
+    , gCertificateName :: !(Maybe String)
+    }
     deriving (Show)
