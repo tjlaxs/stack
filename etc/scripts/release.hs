@@ -24,6 +24,7 @@ import System.Process
 import qualified Codec.Archive.Tar as Tar
 import qualified Codec.Archive.Zip as Zip
 import qualified Codec.Compression.GZip as GZip
+import Crypto.Hash (Digest, SHA256 (..), digestToHexByteString, hash)
 import Data.Aeson
 import qualified Data.CaseInsensitive as CI
 import Data.Conduit
@@ -144,9 +145,10 @@ rules global@Global{..} args = do
     releaseDir </> "*" <.> uploadExt %> \out -> do
         let srcFile = dropExtension out
             mUploadLabel =
-                if takeExtension srcFile == ascExt
-                    then fmap (++ " (GPG signature)") gUploadLabel
-                    else gUploadLabel
+                case takeExtension srcFile of
+                    e | e == ascExt -> fmap (++ " (GPG signature)") gUploadLabel
+                      | e == sha256Ext -> fmap (++ " (SHA256 checksum)") gUploadLabel
+                      | otherwise -> gUploadLabel
         uploadToGithubRelease global srcFile mUploadLabel
         copyFileChanged srcFile out
 
@@ -161,7 +163,8 @@ rules global@Global{..} args = do
                     ["--local-bin-path=" ++ tmpDir]
                     c
             () <- cmd0 "install" gBuildArgs $ concat $ concat
-                [["--pedantic --no-haddock-deps"], [" --haddock" | gTestHaddocks]]
+                [["--pedantic --no-haddock-deps --flag stack:integration-tests"]
+                ,[" --haddock" | gTestHaddocks]]
             () <- cmd0 (Cwd "etc/scripts") "install" "cabal-install"
             let cmd' c = cmd (AddPath [tmpDir] []) stackProgName (stackArgs global) c
             () <- cmd' "test" gBuildArgs "--pedantic --flag stack:integration-tests"
@@ -232,6 +235,13 @@ rules global@Global{..} args = do
             [ "-u", gGpgKey
             , dropExtension out ]
 
+    releaseDir </> "*" <.> sha256Ext %> \out -> do
+        need [out -<.> ""]
+        bs <- liftIO $ do
+            _ <- tryJust (guard . isDoesNotExistError) (removeFile out)
+            S8.readFile (dropExtension out)
+        writeFileChanged out (S8.unpack (digestToHexByteString (hash bs :: Digest SHA256)) ++ "\n")
+
     releaseBinDir </> binaryName </> stackExeFileName %> \out -> do
         alwaysRerun
         actionOnException
@@ -240,8 +250,9 @@ rules global@Global{..} args = do
                 ["--local-bin-path=" ++ takeDirectory out]
                 "install"
                 gBuildArgs
-                "--pedantic")
-            (removeFile out)
+                "--pedantic"
+                "--flag stack:integration-tests")
+            (tryJust (guard . isDoesNotExistError) (removeFile out))
 
     debDistroRules ubuntuDistro ubuntuVersions
     rpmDistroRules centosDistro centosVersions
@@ -392,8 +403,8 @@ rules global@Global{..} args = do
     releaseBinDir = releaseDir </> "bin"
     distroVersionDir DistroVersion{..} = releaseDir </> dvDistro </> dvVersion
 
-    binaryPkgFileNames = binaryPkgArchiveFileNames ++ binaryPkgSignatureFileNames
-    binaryPkgSignatureFileNames = map (<.> ascExt) binaryPkgArchiveFileNames
+    binaryPkgFileNames =
+        concatMap (\x -> [x, x <.> ascExt, x <.> sha256Ext]) binaryPkgArchiveFileNames
     binaryPkgArchiveFileNames =
         case platformOS of
             Windows -> [binaryPkgZipFileName, binaryPkgTarGzFileName]
@@ -447,10 +458,10 @@ rules global@Global{..} args = do
     gzExt = ".gz"
     tarExt = ".tar"
     ascExt = ".asc"
+    sha256Ext = ".sha256"
     uploadExt = ".upload"
     debExt = ".deb"
     rpmExt = ".rpm"
-
 
 -- | Upload file to Github release.
 uploadToGithubRelease :: Global -> FilePath -> Maybe String -> Action ()

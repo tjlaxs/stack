@@ -1,9 +1,7 @@
 REM TODO: move this logic into release.hs
+REM Note: STACK_ROOT, TMP, and TEMP must be set to short paths otherwise this is unlikely to work
 setlocal
 path C:\Program Files\Git\usr\bin;%PATH%
-set STACK_ROOT=C:\.stack
-set TMP=C:\tmp
-set TEMP=C:\tmp
 set RELEASE_SCRIPT=%APPDATA%\local\bin\stack-release-script.exe
 if exist %RELEASE_SCRIPT% del %RELEASE_SCRIPT%
 set BUILD_DIR=%CD%

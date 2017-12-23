@@ -13,6 +13,7 @@ dependencies:
 - case-insensitive
 - conduit
 - conduit-combinators
+- cryptohash
 - directory
 - extra
 - http-conduit
