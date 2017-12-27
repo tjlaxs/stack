@@ -21,6 +21,7 @@
 * @@@ might have alpine 32-bit GHC available too (see https://github.com/alpinelinux/aports/pull/2042#issuecomment-320137857) for static 32-bit builds.  also try bindists in https://github.com/redneb/ghc-alt-libc
 * @@@ maybe announce fully phasing out ubuntu/centos packages?
 * @@@ put back on stackage
+* @@@ remove `-nopie` variants from stack-setup-2.yaml (stack-1.7 will no longer use them, so wait a few more major releases)
 
 ## Version scheme
 
@@ -135,7 +136,6 @@ consistent and clean stack version.
     * Run `etc\scripts\windows-releases.bat`
     * Release Windows installers. See
       [stack-installer README](https://github.com/borsboom/stack-installer#readme)
-      [@@@ copy to `_release` and then use release script to upload sigs and checksums]
 
 * On Linux ARMv7:
     * Run `etc/scripts/linux-armv7-release.sh`
@@ -153,15 +153,15 @@ consistent and clean stack version.
 
 * Push signed Git tag, matching Github release tag name, e.g.: `git tag -d vX.Y.Z; git tag -s -m vX.Y.Z vX.Y.Z && git push -f origin vX.Y.Z`
 
-* Reset the `release` branch to the released commit, e.g.: `git checkout release && git merge --ff-only vX.Y.Z && git push origin release`
-
-* Update the `stable` branch similarly
-
 * Upload package to Hackage: `stack upload .`
 
 * Make a revision on Hackage using the bounds from `_release/stack-X.Y.Z_bounds.cabal`.
 
-* In the `stable` branch's:
+* Reset the `release` branch to the released commit, e.g.: `git checkout release && git merge --ff-only vX.Y.Z && git push origin release`
+
+* Update the `stable` branch similarly
+
+* In the `stable` branch:
     * package.yaml: bump the version number even third component (e.g. from 1.6.1 to 1.6.2)
     * ChangeLog: Add an "Unreleased changes" section
 
@@ -171,26 +171,25 @@ consistent and clean stack version.
   [readthedocs.org](https://readthedocs.org/dashboard/stack/versions/), and
   ensure that stable documentation has updated
 
-* Merge any changes made in the RC/release/stable branches to master (be careful about version changes)
+* Merge any changes made in the RC/release/stable branches to master (be careful about version and changelog)
 
-* On a machine with Vagrant installed:
+* [@@@ SKIP; no longer doing distro releases] On a machine with Vagrant installed:
     * Make sure you are on the same commit as when `vagrant-release.sh` was run.
     * Set environment variables: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`.
       Note: since one of the tools (rpm-s3 on CentOS) doesn't support AWS temporary credentials, you can't use MFA with the AWS credentials (`AWS_SECURITY_TOKEN` is ignored).
-
     * Run `etc/scripts/vagrant-distros.sh`
 
 * Upload haddocks to Hackage: `etc/scripts/upload-haddocks.sh` (if they weren't auto-built)
 
+* Update fpco/stack-build Docker images with new version
+
 * Announce to haskell-cafe@haskell.org, haskell-stack@googlegroups.com,
   commercialhaskell@googlegroups.com mailing lists
-
-* Update fpco/stack-build Docker images with new version
 
 * Keep an eye on the
   [Hackage matrix builder](http://matrix.hackage.haskell.org/package/stack)
 
-* @@@ add back to stackage nightly if fallen out
+* Add back to stackage nightly if fallen out
 
 ## Setting up a Windows VM for releases
 
@@ -243,7 +242,7 @@ set up.
 
         SET TEMP=C:\p\tmp
         SET TMP=C:\p\tmp
-        SET PATH="c:\Program Files\Git\usr\bin";"C:\Program Files\Microsoft SDKs\Windows\v7.1\Bin";%PATH%
+        PATH c:\Program Files\Git\usr\bin;C:\Program Files\Microsoft SDKs\Windows\v7.1\Bin;%PATH%
 
 15. Run `C:\p\env.bat` (do this every time you open a new command prompt)
 
@@ -427,20 +426,67 @@ Import the `dev@fpcomplete.com` (0x575159689BEFB442) GPG secret key
 
   * Build any additional required bindists (see below for instructions)
 
+      @@@ once stack-1.7 out which has fallbacks, might not need tinfo6 anymore but just ncurses6 (if all distros that have tinfo6 can be assumed to have ncurses6)
+      @@@ used void linux to build with ncurses6, since other distros now include tinfo6
+
       * @@@ 32-bit/64-bit gmp4/centos67?
-      * tinfo6 and tinfo6-nopie(`etc/vagrant/fedora-24-x86_64`)
+      * tinfo6 and tinfo6-nopie(`etc/vagrant/fedora-24-x86_64`) -- @@@ used by at least Arch, Gentoo/Sabayon
       * ncurses6-nopie (`etc/vagrant/arch-x86_64`) -- be sure to upgrade VM, last time it wasn't nopie.  see if we can ask @cocreature to build, he did the last one (https://github.com/fpco/stackage-content/pull/26)
   * [Edit stack-setup-2.yaml](https://github.com/fpco/stackage-content/edit/master/stack/stack-setup-2.yaml)
     and add the new bindists, pointing to the Github release version. Be sure to
     update the `content-length` and `sha1` values.
+
+
+@@@ PATCH FOR TINFO6 `configure`
+```
+--- ../configure.ORIG 2017-12-27 16:05:40.509226151 +0000
++++ configure 2017-12-27 16:06:02.222226151 +0000
+@@ -4715,6 +4715,23 @@
+    fi
+    rm -f conftest.c conftest.o conftest
+
++   # This patch seems to fix linking on Gentoo
++   { $as_echo "$as_me:${as_lineno-$LINENO}: checking whether GCC supports --no-pie" >&5
++$as_echo_n "checking whether GCC supports --no-pie... " >&6; }
++   echo 'int main() { return 0; }' > conftest.c
++   # Some GCC versions only warn when passed an unrecognized flag.
++   if $CC --no-pie -x c /dev/null -dM -E > conftest.txt 2>&1 && ! grep -i unrecognized conftest.txt > /dev/null 2>&1; then
++       if test "$CONF_GCC_SUPPORTS_NO_PIE" = NO; then
++           CONF_GCC_LINKER_OPTS_STAGE2="$CONF_GCC_LINKER_OPTS_STAGE2 --no-pie"
++       fi
++       { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
++$as_echo "yes" >&6; }
++   else
++       { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
++$as_echo "no" >&6; }
++   fi
++   rm -f conftest.c conftest.o conftest
++
+ ac_ext=c
+ ac_cpp='$CPP $CPPFLAGS'
+ ac_compile='$CC -c $CFLAGS $CPPFLAGS conftest.$ac_ext >&5'
+```
 
 ### Building GHC
 
 On systems with a small `/tmp`, you should set TMP and TEMP to an alternate
 location.
 
+@@@ standardize on ubuntu 16.04 for builds without terminfo
+
+Setup the system based on [these instructions](https://ghc.haskell.org/trac/ghc/wiki/Building/Preparation/Linux).  On Ubuntu (`docker run -ti --rm ubuntu:16.04`):
+
+    apt-get update && apt-get install -y ghc alex happy make autoconf g++ git vim xz-utils automake libtool gcc libgmp-dev ncurses-dev libtinfo-dev python3
+
+on Void Linux (`docker run -ti --rm voidlinux/voidlinux bash`):
+
+    xbps-install -S curl gcc make xz ghc autoconf git vim automake gmp-devel ncurses-devel python3 cabal-install && \
+    cabal update && \
+    cabal install alex happy
+
 For GHC >= 7.10.2, set the `GHC_VERSION` environment variable to the version to build:
 
+  * `export GHC_VERSION=8.2.2`
   * `export GHC_VERSION=8.2.1`
   * `export GHC_VERSION=8.0.2`
   * `export GHC_VERSION=8.0.1`
@@ -448,6 +494,8 @@ For GHC >= 7.10.2, set the `GHC_VERSION` environment variable to the version to 
   * `export GHC_VERSION=7.10.2`
 
 then, run (from [here](https://ghc.haskell.org/trac/ghc/wiki/Newcomers)):
+
+@@@ should also patch 'configure' with gentoo --no-pie check (see below)
 
     git config --global url."git://github.com/ghc/packages-".insteadOf git://github.com/ghc/packages/ && \
     git clone -b ghc-${GHC_VERSION}-release --recursive git://github.com/ghc/ghc ghc-${GHC_VERSION} && \
@@ -474,3 +522,67 @@ GHC 7.8.4 is slightly different:
     sed -i 's/^TAR_COMP *= *bzip2$/TAR_COMP = xz/' mk/config.mk && \
     make -j$(cat /proc/cpuinfo|grep processor|wc -l) && \
     make binary-dist
+
+
+
+
+
+
+
+
+# @@@ tinfo/ncurses/nopie bindist stuff
+
+docker run -ti --name stack-arch base/archlinux
+pacman -Syu make gcc git
+curl -sSL https://get.haskellstack.org/ |sh
+stack setup
+stack new test
+cd test
+stack build
+stack exec test-exe
+
+
+
+@@@ stack ghc builds: https://docs.google.com/spreadsheets/d/16SkXJkPkK0QoGLmNlDdA82rrurSBzAIqgxbE9LhPu-4/edit#gid=0
+
+@@@ issue to discuss using ghc bindist with `WITH_TERMINFO=NO` (`sed -i 's/^WITH_TERMINFO=YES$/WITH_TERMINFO=NO/' mk/config.mk`)
+@@@ issue to have 'configure' patches "inline" in stack-setup-2.yaml instead of needing to patch GHC bindist
+@@@ issue to have fallback from tinfo6 to ncurses6 to ncurses5 (or vice-versa)
+@@@ issue to remove check for `nopie` since it's fundamentally broken (this may cause old GHC versions to fail on some old distro versions, but we could patch those bindists to work if needed), and also remove support for `configure-env` in stack-setup-2.yaml
+@@@ adjust djustments to https://github.com/commercialhaskell/stack/blob/stable/doc/faq.md#i-get-strange-ld-errors-about-recompiling-with--fpic
+@@@ come back to https://github.com/commercialhaskell/stack/issues/3518 and merge if OK
+
+
+@@@ proposal
+- if tinfo6-pie build exists use it, then fall back to tinfo6, then ncurses6-nopie, then ncurses6, then nopie, and finally default build
+- for future ghcs, only add default build with a 'USE_TERMINFO=NO' GHC bindist
+- eventually drop checks for nopie, tinfo6, and ncurses6 builds
+
+
+### Arch
+
+docker run -ti base/archlinux
+pacman -Syu make gcc git
+
+### Sabayon (Gentoo)
+
+docker run -ti --rm sabayon/base-amd64 bash
+equo install git gcc make vim
+
+### Fedora
+
+docker run -ti --rm fedora:27 bash
+dnf install -y git
+
+### CentOS 7
+
+docker run -ti --rm centos:7
+yum install -y git
+
+### General
+
+curl https://get.haskellstack.org/ |sh
+git clone https://github.com/borsboom/stack-test-nopie.git
+cd stack-test-nopie
+stack setup --verbose --setup-info-yaml=https://raw.githubusercontent.com/fpco/stackage-content/nopie-fixes-arch-gentoo/stack/stack-setup-2.yaml
+stack test
