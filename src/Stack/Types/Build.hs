@@ -62,13 +62,11 @@ import           Data.Text.Encoding              (decodeUtf8With)
 import           Data.Text.Encoding.Error        (lenientDecode)
 import           Data.Time.Calendar
 import           Data.Time.Clock
-import           Data.Version                    (showVersion)
 import           Distribution.PackageDescription (TestSuiteInterface)
 import           Distribution.System             (Arch)
 import qualified Distribution.Text               as C
 import           Path                            (mkRelDir, parseRelDir, (</>))
 import           Path.Extra                      (toFilePathNoTrailingSep)
-import           Paths_stack                     as Meta
 import           Stack.Constants
 import           Stack.Types.BuildPlan
 import           Stack.Types.Compiler
@@ -187,7 +185,7 @@ instance Show StackBuildException where
                 "The following target packages were not found: " ++
                 intercalate ", " (map packageNameString $ Set.toList noKnown) ++
                 "\nSee https://docs.haskellstack.org/en/v"
-                <> showVersion Meta.version <>
+                <> versionString stackMinorVersion <>
                 "/build_command/#target-syntax for details."
         notInSnapshot'
             | Map.null notInSnapshot = []
@@ -606,7 +604,6 @@ configureOptsNoDir econfig bco deps isLocal package = concat
     , map ("--extra-include-dirs=" ++) (Set.toList (configExtraIncludeDirs config))
     , map ("--extra-lib-dirs=" ++) (Set.toList (configExtraLibDirs config))
     , maybe [] (\customGcc -> ["--with-gcc=" ++ toFilePath customGcc]) (configOverrideGccPath config)
-    , hpackOptions (configOverrideHpack config)
     , ["--ghcjs" | wc == Ghcjs]
     , ["--exact-configuration" | useExactConf]
     ]
@@ -630,9 +627,6 @@ configureOptsNoDir econfig bco deps isLocal package = concat
     depOptions = map (uncurry toDepOption) $ Map.toList deps
       where
         toDepOption = if newerCabal then toDepOption1_22 else toDepOption1_18
-
-    hpackOptions HpackBundled = []
-    hpackOptions (HpackCommand cmd) = ["--with-hpack=" ++ cmd]
 
     toDepOption1_22 ident gid = concat
         [ "--dependency="
