@@ -948,14 +948,14 @@ resolvePackageDescription packageConfig (GenericPackageDescription desc defaultF
                   map (\(n,v) -> (resolveConditions rc (updateBenchmarkDeps modBuildable) v){benchmarkName=n})
                       benches}
 
-        flags =
+        _flags =
           M.union (packageConfigFlags packageConfig)
                   (flagMap defaultFlags)
 
         rc = mkResolveConditions
                 (packageConfigCompilerVersion packageConfig)
                 (packageConfigPlatform packageConfig)
-                flags
+                FDRTakeAll -- FIXME flags
 
         updateLibDeps lib deps =
           lib {libBuildInfo =
@@ -1002,7 +1002,7 @@ flagMap = M.fromList . map pair
         pair (MkFlag (fromCabalFlagName -> name) _desc def _manual) = (name,def)
 
 data ResolveConditions = ResolveConditions
-    { rcFlags :: Map FlagName Bool
+    { rcFlags :: FlagDepResolution
     , rcCompilerVersion :: CompilerVersion 'CVActual
     , rcOS :: OS
     , rcArch :: Arch
@@ -1011,7 +1011,7 @@ data ResolveConditions = ResolveConditions
 -- | Generic a @ResolveConditions@ using sensible defaults.
 mkResolveConditions :: CompilerVersion 'CVActual -- ^ Compiler version
                     -> Platform -- ^ installation target platform
-                    -> Map FlagName Bool -- ^ enabled flags
+                    -> FlagDepResolution
                     -> ResolveConditions
 mkResolveConditions compilerVersion (Platform arch os) flags = ResolveConditions
     { rcFlags = flags
@@ -1019,6 +1019,30 @@ mkResolveConditions compilerVersion (Platform arch os) flags = ResolveConditions
     , rcOS = os
     , rcArch = arch
     }
+
+data ThreeWay
+  = TWTrue
+  | TWBoth
+  | TWFalse
+
+twnot :: ThreeWay -> ThreeWay
+twnot TWTrue = TWFalse
+twnot TWBoth = TWBoth
+twnot TWFalse = TWFalse
+
+twor :: ThreeWay -> ThreeWay -> ThreeWay
+twor TWFalse x = x
+twor TWTrue _ = TWTrue
+twor TWBoth TWTrue = TWTrue
+twor TWBoth TWFalse = TWBoth
+twor TWBoth TWBoth = TWBoth
+
+twand :: ThreeWay -> ThreeWay -> ThreeWay
+twand TWTrue x = x
+twand TWFalse _ = TWTrue
+twand TWBoth TWFalse = TWFalse
+twand TWBoth TWTrue = TWBoth
+twand TWBoth TWBoth = TWBoth
 
 -- | Resolve the condition tree for the library.
 resolveConditions :: (Monoid target,Show target)
@@ -1030,29 +1054,43 @@ resolveConditions rc addDeps (CondNode lib deps cs) = basic <> children
   where basic = addDeps lib deps
         children = mconcat (map apply cs)
           where apply (Cabal.CondBranch cond node mcs) =
-                  if condSatisfied cond
-                     then resolveConditions rc addDeps node
-                     else maybe mempty (resolveConditions rc addDeps) mcs
+                  case condSatisfied cond of
+                    TWTrue -> resolveConditions rc addDeps node
+                    TWBoth ->
+                      case mcs of
+                        Nothing -> resolveConditions rc addDeps node
+                        Just cs' -> resolveConditions rc addDeps node <> resolveConditions rc addDeps cs'
+                    TWFalse -> maybe mempty (resolveConditions rc addDeps) mcs
+
+                fromBool :: Bool -> ThreeWay
+                fromBool True = TWTrue
+                fromBool False = TWFalse
+
+                condSatisfied :: Condition ConfVar -> ThreeWay
                 condSatisfied c =
                   case c of
                     Var v -> varSatisifed v
-                    Lit b -> b
+                    Lit b -> fromBool b
                     CNot c' ->
-                      not (condSatisfied c')
+                      twnot (condSatisfied c')
                     COr cx cy ->
-                      condSatisfied cx || condSatisfied cy
+                      condSatisfied cx `twor` condSatisfied cy
                     CAnd cx cy ->
-                      condSatisfied cx && condSatisfied cy
+                      condSatisfied cx `twand` condSatisfied cy
+
+                varSatisifed :: ConfVar -> ThreeWay
                 varSatisifed v =
                   case v of
-                    OS os -> os == rcOS rc
-                    Arch arch -> arch == rcArch rc
+                    OS os -> fromBool $ os == rcOS rc
+                    Arch arch -> fromBool $ arch == rcArch rc
                     Flag flag ->
-                      fromMaybe False $ M.lookup (fromCabalFlagName flag) (rcFlags rc)
-                      -- NOTE:  ^^^^^ This should never happen, as all flags
-                      -- which are used must be declared. Defaulting to
-                      -- False.
-                    Impl flavor range ->
+                      case rcFlags rc of
+                        FDRTakeAll -> TWBoth
+                        FDRFlags flags -> fromBool $ fromMaybe False $ M.lookup (fromCabalFlagName flag) flags
+                        -- NOTE:  ^^^^^ 'Nothing' should never happen, as all flags
+                        -- which are used must be declared. Defaulting to
+                        -- False.
+                    Impl flavor range -> fromBool $
                       case (flavor, rcCompilerVersion rc) of
                         (GHC, GhcVersion vghc) -> vghc `withinRange` range
                         (GHC, GhcjsVersion _ vghc) -> vghc `withinRange` range

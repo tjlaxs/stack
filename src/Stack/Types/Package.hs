@@ -186,6 +186,15 @@ data PackageConfig =
                 }
  deriving (Show,Typeable)
 
+-- | When determining the dependencies for a package, we can either
+-- respect an actual set of flags ('FDRFlags') or list as dependencies
+-- all packages which are dependencies of any selection of flags
+-- ('FDRTakeAll'). The latter is useful if you want to preemptively
+-- build all possible packages you may want to use in the future.
+data FlagDepResolution
+  = FDRFlags (Map FlagName Bool)
+  | FDRTakeAll
+
 -- | Compares the package name.
 instance Ord Package where
   compare = on compare packageName
