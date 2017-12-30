@@ -18,11 +18,11 @@ custom-setup:
   - Cabal
   - filepath
 extra-source-files:
+# Note: leaving out `package.yaml` since that ends up being out-of-sync with Hackage metadata revisions
 - CONTRIBUTING.md
 - ChangeLog.md
 - README.md
 - doc/*.md
-- package.yaml
 - src/setup-shim/StackSetupShim.hs
 - stack.yaml
 - test/package-dump/ghc-7.10.txt

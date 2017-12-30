@@ -4,6 +4,7 @@
 
 ## Next release:
 
+* Remove `package.yaml` from hackage sdists (e.g. by removing from extra-source-files) since it causes confusion with hackage metadata revisions.
 * Don't upgrade stack.yaml to lts 10 until after v1.7 has been released (therwise will prevent `stack upgrade` from source working for people on older versions)
 * @@@ for prerelease/release candidate, make a `vX.Y.Z` (minor version) branch and enable RTFD for it so that doc links (which ignore patchlevel) work
 * Add SHA256 checksums for bindists
