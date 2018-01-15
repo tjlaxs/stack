@@ -40,7 +40,6 @@ import           Stack.Build.Haddock
 import           Stack.Build.Installed
 import           Stack.Build.Source
 import           Stack.BuildPlan
-import           Stack.Config (getLocalPackages)
 import           Stack.Constants
 import           Stack.Package
 import           Stack.PackageDump
@@ -189,8 +188,7 @@ constructPlan ls0 baseConfigOpts0 locals extraToBuild0 localDumpPkgs loadPackage
     let inner = do
             mapM_ onWanted $ filter lpWanted locals
             mapM_ (addDep False) $ Set.toList extraToBuild0
-    lp <- getLocalPackages
-    let ctx = mkCtx econfig lp
+    let ctx = mkCtx econfig
     ((), m, W efinals installExes dirtyReason deps warnings parents) <-
         liftIO $ runRWST inner ctx M.empty
     mapM_ logWarn (warnings [])
@@ -225,7 +223,7 @@ constructPlan ls0 baseConfigOpts0 locals extraToBuild0 localDumpPkgs loadPackage
             prettyErrorNoIndent $ pprintExceptions errs stackYaml parents (wanted ctx)
             throwM $ ConstructPlanFailed "Plan construction failed."
   where
-    mkCtx econfig lp = Ctx
+    mkCtx econfig = Ctx
         { ls = ls0
         , baseConfigOpts = baseConfigOpts0
         , loadPackage = \x y z -> runRIO econfig $ loadPackage0 x y z
@@ -241,7 +239,7 @@ constructPlan ls0 baseConfigOpts0 locals extraToBuild0 localDumpPkgs loadPackage
         , localNames = Set.fromList $ map (packageName . lpPackage) locals
         }
       where
-        toolMap = getToolMap ls0 lp
+        toolMap = getToolMap sourceMap
 
 -- | State to be maintained during the calculation of local packages
 -- to unregister.
@@ -430,7 +428,7 @@ tellExecutables (PSFiles lp _)
     | otherwise = return ()
 -- Ignores ghcOptions because they don't matter for enumerating
 -- executables.
-tellExecutables (PSIndex loc flags _ghcOptions pir) =
+tellExecutables (PSIndex loc flags _exes _ghcOptions pir) =
     tellExecutablesUpstream pir loc flags
 
 tellExecutablesUpstream :: PackageIdentifierRevision -> InstallLocation -> Map FlagName Bool -> M ()
@@ -472,7 +470,7 @@ installPackage :: Bool -- ^ is this being used by a dependency?
 installPackage treatAsDep name ps minstalled = do
     ctx <- ask
     case ps of
-        PSIndex _ flags ghcOptions pkgLoc -> do
+        PSIndex _ flags _ ghcOptions pkgLoc -> do
             planDebug $ "installPackage: Doing all-in-one build for upstream package " ++ show name
             package <- loadPackage ctx (PLIndex pkgLoc) flags ghcOptions -- FIXME be more efficient! Get this from the LoadedPackageInfo!
             resolveDepsAndInstall True treatAsDep ps package minstalled
@@ -573,7 +571,7 @@ installPackageGivenDeps isAllInOne ps package minstalled (missing, present, minL
             , taskType =
                 case ps of
                     PSFiles lp loc -> TTFiles lp (loc <> minLoc)
-                    PSIndex loc _ _ pkgLoc -> TTIndex package (loc <> minLoc) pkgLoc
+                    PSIndex loc _ _ _ pkgLoc -> TTIndex package (loc <> minLoc) pkgLoc
             , taskAllInOne = isAllInOne
             , taskCachePkgSrc = toCachePkgSrc ps
             , taskAnyMissing = not $ Set.null missing

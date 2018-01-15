@@ -22,7 +22,7 @@ import           Distribution.ModuleName (ModuleName)
 import           Distribution.PackageDescription (TestSuiteInterface, BuildType)
 import           Distribution.System (Platform (..))
 import           Path as FL
-import           Stack.Types.BuildPlan (PackageLocation, PackageLocationIndex (..), ExeName)
+import           Stack.Types.BuildPlan (PackageLocation, PackageLocationIndex (..), ExeName (..))
 import           Stack.Types.Compiler
 import           Stack.Types.Config
 import           Stack.Types.FlagName
@@ -201,22 +201,22 @@ type SourceMap = Map PackageName PackageSource
 data PackageSource
   = PSFiles LocalPackage InstallLocation
   -- ^ Package which exist on the filesystem (as opposed to an index tarball)
-  | PSIndex InstallLocation (Map FlagName Bool) [Text] PackageIdentifierRevision
+  | PSIndex InstallLocation (Map FlagName Bool) (Set ExeName) [Text] PackageIdentifierRevision
   -- ^ Package which is in an index, and the files do not exist on the
   -- filesystem yet.
     deriving Show
 
 piiVersion :: PackageSource -> Version
 piiVersion (PSFiles lp _) = packageVersion $ lpPackage lp
-piiVersion (PSIndex _ _ _ (PackageIdentifierRevision (PackageIdentifier _ v) _)) = v
+piiVersion (PSIndex _ _ _ _ (PackageIdentifierRevision (PackageIdentifier _ v) _)) = v
 
 piiLocation :: PackageSource -> InstallLocation
 piiLocation (PSFiles _ loc) = loc
-piiLocation (PSIndex loc _ _ _) = loc
+piiLocation (PSIndex loc _ _ _ _) = loc
 
 piiPackageLocation :: PackageSource -> PackageLocationIndex FilePath
 piiPackageLocation (PSFiles lp _) = PLOther (lpLocation lp)
-piiPackageLocation (PSIndex _ _ _ pir) = PLIndex pir
+piiPackageLocation (PSIndex _ _ _ _ pir) = PLIndex pir
 
 -- | Information on a locally available package of source code
 data LocalPackage = LocalPackage
@@ -258,6 +258,9 @@ data LocalPackage = LocalPackage
 
 lpFiles :: LocalPackage -> Set.Set (Path Abs File)
 lpFiles = Set.unions . M.elems . lpComponentFiles
+
+lpExecutables :: LocalPackage -> Set.Set ExeName
+lpExecutables = Set.fromList . map ExeName . Set.toList . packageExes . lpPackage
 
 -- | A location to install a package into, either snapshot or local
 data InstallLocation = Snap | Local

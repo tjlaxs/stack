@@ -36,10 +36,8 @@ import qualified Data.Text as T
 import qualified Distribution.Package as C
 import           Distribution.PackageDescription (GenericPackageDescription,
                                                   flagDefault, flagManual,
-                                                  flagName, genPackageFlags,
-                                                  condExecutables)
+                                                  flagName, genPackageFlags)
 import qualified Distribution.PackageDescription as C
-import qualified Distribution.Types.UnqualComponentName as C
 import           Distribution.System (Platform)
 import           Distribution.Text (display)
 import qualified Distribution.Version as C
@@ -48,7 +46,7 @@ import           Stack.Package
 import           Stack.Snapshot
 import           Stack.Types.BuildPlan
 import           Stack.Types.FlagName
-import           Stack.Types.NamedComponent
+import           Stack.Types.Package
 import           Stack.Types.PackageIdentifier
 import           Stack.Types.PackageName
 import           Stack.Types.Version
@@ -144,46 +142,23 @@ instance Show BuildPlanException where
         T.unpack url ++
         ", because no 'compiler' or 'resolver' is specified."
 
--- | Map from tool name to package providing it. This accounts for
--- both snapshot and local packages (deps and project packages).
-getToolMap :: LoadedSnapshot
-           -> LocalPackages
-           -> Map ExeName (Set PackageName)
-getToolMap ls locals =
-
-    {- We no longer do this, following discussion at:
-
-        https://github.com/commercialhaskell/stack/issues/308#issuecomment-112076704
-
-    -- First grab all of the package names, for times where a build tool is
-    -- identified by package name
-    $ Map.fromList (map (packageNameByteString &&& Set.singleton) (Map.keys ps))
-    -}
-
-    Map.unionsWith Set.union $ concat
-        [ concatMap goSnap      $ Map.toList $ lsPackages ls
-        , concatMap goLocalProj $ Map.toList $ lpProject locals
-        , concatMap goLocalDep  $ Map.toList $ lpDependencies locals
-        ]
+-- | Map from tool name to package providing it.
+--
+-- This used to also match package names, not just executable names, but
+-- this is no longer done - see
+-- https://github.com/commercialhaskell/stack/issues/308#issuecomment-112076704
+--
+-- TODO: Only include executables which are @buildable: true@.
+getToolMap :: SourceMap -> Map ExeName (Set PackageName)
+getToolMap =
+    Map.unionsWith Set.union . map toProvidedExeMap . Map.toList
   where
-    goSnap (pname, lpi) =
-        map (flip Map.singleton (Set.singleton pname))
-      $ Set.toList
-      $ lpiProvidedExes lpi
-
-    goLocalProj (pname, lpv) =
-        map (flip Map.singleton (Set.singleton pname))
-        [ExeName t | CExe t <- Set.toList (lpvComponents lpv)]
-
-    goLocalDep (pname, (gpd, _loc)) =
-        map (flip Map.singleton (Set.singleton pname))
-      $ gpdExes gpd
-
-    -- TODO consider doing buildable checking. Not a big deal though:
-    -- worse case scenario is we build an extra package that wasn't
-    -- strictly needed.
-    gpdExes :: GenericPackageDescription -> [ExeName]
-    gpdExes = map (ExeName . T.pack . C.unUnqualComponentName . fst) . condExecutables
+    toProvidedExeMap (pname, ps) = Map.fromSet (\_ -> pnameSet) executables
+      where
+        pnameSet = Set.singleton pname
+        executables = case ps of
+          PSFiles lp _ -> lpExecutables lp
+          PSIndex _ _ exes _ _ -> exes
 
 gpdPackages :: [GenericPackageDescription] -> Map PackageName Version
 gpdPackages gpds = Map.fromList $

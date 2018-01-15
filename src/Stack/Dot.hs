@@ -213,7 +213,7 @@ createDepLoader sourceMap installed globalDumpMap globalIdMap loadPackageDeps pk
           Just (PSFiles lp _) -> pure (packageAllDeps pkg, payloadFromLocal pkg)
             where
               pkg = localPackageToPackage lp
-          Just (PSIndex _ flags ghcOptions loc) ->
+          Just (PSIndex _ flags _ ghcOptions loc) ->
               -- FIXME pretty certain this could be cleaned up a lot by including more info in PackageSource
               let PackageIdentifierRevision (PackageIdentifier name version) _ = loc
                in assert (pkgName == name) (loadPackageDeps pkgName version (PLIndex loc) flags ghcOptions)
