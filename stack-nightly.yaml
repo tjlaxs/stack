@@ -17,3 +17,9 @@ extra-deps:
 # https://github.com/commercialhaskell/stack/issues/3785
 - ansi-terminal-0.8.0.1
 - ansi-wl-pprint-0.6.8.2
+
+# https://github.com/commercialhaskell/stack/issues/3073
+- git: https://github.com/snoyberg/hackage-security
+  commit: 61cd14609e5d7067e14469df31aafebfffda879c
+  subdirs:
+  - hackage-security
