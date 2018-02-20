@@ -17,7 +17,8 @@ import qualified Data.Set as Set
 import           Data.Store.Version (VersionConfig)
 import           Data.Store.VersionTagged (storeVersionConfig)
 import           Distribution.Parsec.Common (PError (..), PWarning (..), showPos)
-import           Distribution.SPDX.License (License)
+import qualified Distribution.SPDX.License as SPDX
+import           Distribution.License (License)
 import           Distribution.ModuleName (ModuleName)
 import           Distribution.PackageDescription (TestSuiteInterface, BuildType)
 import           Distribution.System (Platform (..))
@@ -113,7 +114,7 @@ data PackageLibraries
 data Package =
   Package {packageName :: !PackageName                    -- ^ Name of the package.
           ,packageVersion :: !Version                     -- ^ Version of the package
-          ,packageLicense :: !License                     -- ^ The license the package was released under.
+          ,packageLicense :: !(Either SPDX.License License) -- ^ The license the package was released under.
           ,packageFiles :: !GetPackageFiles               -- ^ Get all files of the package.
           ,packageDeps :: !(Map PackageName VersionRange) -- ^ Packages that the package depends on.
           ,packageTools :: !(Map ExeName VersionRange)    -- ^ A build tool name.
@@ -374,7 +375,7 @@ dotCabalGetPath dcp =
 type InstalledMap = Map PackageName (InstallLocation, Installed)
 
 data Installed
-    = Library PackageIdentifier GhcPkgId (Maybe License)
+    = Library PackageIdentifier GhcPkgId (Maybe (Either SPDX.License License))
     | Executable PackageIdentifier
     deriving (Show, Eq)
 

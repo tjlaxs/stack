@@ -260,7 +260,7 @@ packageFromPackageDescription packageConfig pkgFlags (PackageDescriptionPair pkg
     Package
     { packageName = name
     , packageVersion = fromCabalVersion (pkgVersion pkgId)
-    , packageLicense = license pkg
+    , packageLicense = licenseRaw pkg
     , packageDeps = deps
     , packageFiles = pkgFiles
     , packageTools = packageDescTools pkg
