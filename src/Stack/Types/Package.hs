@@ -16,8 +16,8 @@ import qualified Data.Map as M
 import qualified Data.Set as Set
 import           Data.Store.Version (VersionConfig)
 import           Data.Store.VersionTagged (storeVersionConfig)
-import           Distribution.InstalledPackageInfo (PError)
-import           Distribution.License (License)
+import           Distribution.Parsec.Common (PError (..), PWarning (..), showPos)
+import           Distribution.SPDX.License (License)
 import           Distribution.ModuleName (ModuleName)
 import           Distribution.PackageDescription (TestSuiteInterface, BuildType)
 import           Distribution.System (Platform (..))
@@ -34,7 +34,11 @@ import           Stack.Types.Version
 
 -- | All exceptions thrown by the library.
 data PackageException
-  = PackageInvalidCabalFile (Either PackageIdentifierRevision (Path Abs File)) PError
+  = PackageInvalidCabalFile
+      !(Either PackageIdentifierRevision (Path Abs File))
+      !(Maybe Version)
+      ![PError]
+      ![PWarning]
   | PackageNoCabalFileFound (Path Abs Dir)
   | PackageMultipleCabalFilesFound (Path Abs Dir) [Path Abs File]
   | MismatchedCabalName (Path Abs File) PackageName
@@ -42,13 +46,32 @@ data PackageException
   deriving Typeable
 instance Exception PackageException
 instance Show PackageException where
-    show (PackageInvalidCabalFile loc err) = concat
+    show (PackageInvalidCabalFile loc mversion errs warnings) = concat
         [ "Unable to parse cabal file "
         , case loc of
             Left pir -> "for " ++ packageIdentifierRevisionString pir
             Right fp -> toFilePath fp
-        , ": "
-        , show err
+        , case mversion of
+            Nothing -> ""
+            Just version -> "\nRequires newer Cabal file parser version: " ++
+                            versionString version
+        , "\n\n"
+        , unlines $ map
+            (\(PError pos msg) -> concat
+                [ "- "
+                , showPos pos
+                , ": "
+                , msg
+                ])
+            errs
+        , unlines $ map
+            (\(PWarning _ pos msg) -> concat
+                [ "- "
+                , showPos pos
+                , ": "
+                , msg
+                ])
+            warnings
         ]
     show (PackageNoCabalFileFound dir) = concat
         [ "Stack looks for packages in the directories configured in"
@@ -104,7 +127,7 @@ data Package =
           ,packageExes :: !(Set Text)                     -- ^ names of executables
           ,packageOpts :: !GetPackageOpts                 -- ^ Args to pass to GHC.
           ,packageHasExposedModules :: !Bool              -- ^ Does the package have exposed modules?
-          ,packageBuildType :: !(Maybe BuildType)         -- ^ Package build-type.
+          ,packageBuildType :: !BuildType                 -- ^ Package build-type.
           ,packageSetupDeps :: !(Maybe (Map PackageName VersionRange))
                                                           -- ^ If present: custom-setup dependencies
           }

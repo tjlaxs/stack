@@ -23,7 +23,7 @@ import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import qualified Data.Traversable as T
 import           Distribution.Text (display)
-import           Distribution.License (License(BSD3))
+import           Distribution.License (License(BSD3), licenseFromSPDX)
 import           Stack.Build (loadPackage)
 import           Stack.Build.Installed (getInstalled, GetInstalledOpts(..))
 import           Stack.Build.Source
@@ -130,7 +130,7 @@ createDependencyGraph dotOpts = do
               return (Set.empty, DotPayload (Just version) (Just BSD3))
           | otherwise = fmap (packageAllDeps &&& makePayload) (loadPackage loc flags ghcOptions)
   resolveDependencies (dotDependencyDepth dotOpts) graph depLoader
-  where makePayload pkg = DotPayload (Just $ packageVersion pkg) (Just $ packageLicense pkg)
+  where makePayload pkg = DotPayload (Just $ packageVersion pkg) (Just $ licenseFromSPDX $ packageLicense pkg)
 
 listDependencies :: HasEnvConfig env
                   => ListDepsOpts
@@ -228,12 +228,12 @@ createDepLoader sourceMap installed globalDumpMap globalIdMap loadPackageDeps pk
                                           (Map.lookup depId globalIdMap))
                          (dpDepends dp)
   where
-    payloadFromLocal pkg = DotPayload (Just $ packageVersion pkg) (Just $ packageLicense pkg)
+    payloadFromLocal pkg = DotPayload (Just $ packageVersion pkg) (Just $ licenseFromSPDX $ packageLicense pkg)
     payloadFromInstalled maybePkg = DotPayload (fmap (installedVersion . snd) maybePkg) $
         case maybePkg of
-            Just (_, Library _ _ mlicense) -> mlicense
+            Just (_, Library _ _ mlicense) -> licenseFromSPDX <$> mlicense
             _ -> Nothing
-    payloadFromDump dp = DotPayload (Just $ packageIdentifierVersion $ dpPackageIdent dp) (dpLicense dp)
+    payloadFromDump dp = DotPayload (Just $ packageIdentifierVersion $ dpPackageIdent dp) (licenseFromSPDX <$> dpLicense dp)
 
 -- | Resolve the direct (depth 0) external dependencies of the given local packages
 localDependencies :: DotOpts -> [LocalPackage] -> [(PackageName, (Set PackageName, DotPayload))]
@@ -246,7 +246,7 @@ localDependencies dotOpts locals =
             then Set.delete (packageName pkg) (packageAllDeps pkg)
             else Set.intersection localNames (packageAllDeps pkg)
         localNames = Set.fromList $ map (packageName . lpPackage) locals
-        lpPayload pkg = DotPayload (Just $ packageVersion pkg) (Just $ packageLicense pkg)
+        lpPayload pkg = DotPayload (Just $ packageVersion pkg) (Just $ licenseFromSPDX $ packageLicense pkg)
 
 -- | Print a graphviz graph of the edges in the Map and highlight the given local packages
 printGraph :: (Applicative m, MonadIO m)

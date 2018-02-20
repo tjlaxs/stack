@@ -36,7 +36,8 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 import           Data.Store.VersionTagged
 import qualified Data.Text as T
-import qualified Distribution.License as C
+import           Distribution.License (licenseToSPDX)
+import qualified Distribution.SPDX.License as C
 import qualified Distribution.System as OS
 import qualified Distribution.Text as C
 import           Path.Extra (toFilePathNoTrailingSep)
@@ -352,7 +353,7 @@ conduitDumpPackage = (.| CL.catMaybes) $ eachSection $ do
                 exposed = parseM "exposed"
                 license =
                     case parseM "license" of
-                        [licenseText] -> C.simpleParse (T.unpack licenseText)
+                        [licenseText] -> licenseToSPDX <$> C.simpleParse (T.unpack licenseText)
                         _ -> Nothing
             depends <- mapMaybeM parseDepend $ concatMap T.words $ parseM "depends"
 

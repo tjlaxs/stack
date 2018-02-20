@@ -15,3 +15,9 @@ extra-deps:
 - archive: https://github.com/haskell/hackage-security/archive/3297b0f3f4285cb30321baaa7b54e3d22e1f6bd7.tar.gz
   subdirs:
   - hackage-security
+- archive: https://github.com/haskell/cabal/archive/32fea06a1023a507d7dc16b29f542538c0b55e46.tar.gz
+  subdirs:
+  - Cabal
+- happy-1.19.9
+
+allow-newer: true
