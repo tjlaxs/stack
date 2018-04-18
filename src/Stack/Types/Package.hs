@@ -16,7 +16,8 @@ import qualified Data.Map as M
 import qualified Data.Set as Set
 import           Data.Store.Version (VersionConfig)
 import           Data.Store.VersionTagged (storeVersionConfig)
-import           Distribution.InstalledPackageInfo (PError)
+import           Distribution.Parsec.Common (PError (..), PWarning (..), showPos)
+import qualified Distribution.SPDX.License as SPDX
 import           Distribution.License (License)
 import           Distribution.ModuleName (ModuleName)
 import           Distribution.PackageDescription (TestSuiteInterface, BuildType)
@@ -34,7 +35,11 @@ import           Stack.Types.Version
 
 -- | All exceptions thrown by the library.
 data PackageException
-  = PackageInvalidCabalFile (Either PackageIdentifierRevision (Path Abs File)) PError
+  = PackageInvalidCabalFile
+      !(Either PackageIdentifierRevision (Path Abs File))
+      !(Maybe Version)
+      ![PError]
+      ![PWarning]
   | PackageNoCabalFileFound (Path Abs Dir)
   | PackageMultipleCabalFilesFound (Path Abs Dir) [Path Abs File]
   | MismatchedCabalName (Path Abs File) PackageName
@@ -42,13 +47,38 @@ data PackageException
   deriving Typeable
 instance Exception PackageException
 instance Show PackageException where
-    show (PackageInvalidCabalFile loc err) = concat
+    show (PackageInvalidCabalFile loc _mversion errs warnings) = concat
         [ "Unable to parse cabal file "
         , case loc of
             Left pir -> "for " ++ packageIdentifierRevisionString pir
             Right fp -> toFilePath fp
-        , ": "
-        , show err
+        {-
+
+         Not actually needed, the errors will indicate if a newer version exists.
+         Also, it seems that this is set to Just the version even if we support it.
+
+        , case mversion of
+            Nothing -> ""
+            Just version -> "\nRequires newer Cabal file parser version: " ++
+                            versionString version
+        -}
+        , "\n\n"
+        , unlines $ map
+            (\(PError pos msg) -> concat
+                [ "- "
+                , showPos pos
+                , ": "
+                , msg
+                ])
+            errs
+        , unlines $ map
+            (\(PWarning _ pos msg) -> concat
+                [ "- "
+                , showPos pos
+                , ": "
+                , msg
+                ])
+            warnings
         ]
     show (PackageNoCabalFileFound dir) = concat
         [ "Stack looks for packages in the directories configured in"
@@ -90,7 +120,7 @@ data PackageLibraries
 data Package =
   Package {packageName :: !PackageName                    -- ^ Name of the package.
           ,packageVersion :: !Version                     -- ^ Version of the package
-          ,packageLicense :: !License                     -- ^ The license the package was released under.
+          ,packageLicense :: !(Either SPDX.License License) -- ^ The license the package was released under.
           ,packageFiles :: !GetPackageFiles               -- ^ Get all files of the package.
           ,packageDeps :: !(Map PackageName VersionRange) -- ^ Packages that the package depends on.
           ,packageTools :: !(Map ExeName VersionRange)    -- ^ A build tool name.
@@ -104,7 +134,7 @@ data Package =
           ,packageExes :: !(Set Text)                     -- ^ names of executables
           ,packageOpts :: !GetPackageOpts                 -- ^ Args to pass to GHC.
           ,packageHasExposedModules :: !Bool              -- ^ Does the package have exposed modules?
-          ,packageBuildType :: !(Maybe BuildType)         -- ^ Package build-type.
+          ,packageBuildType :: !BuildType                 -- ^ Package build-type.
           ,packageSetupDeps :: !(Maybe (Map PackageName VersionRange))
                                                           -- ^ If present: custom-setup dependencies
           }
@@ -142,7 +172,7 @@ data BuildInfoOpts = BuildInfoOpts
     -- ^ These options can safely have 'nubOrd' applied to them, as
     -- there are no multi-word options (see
     -- https://github.com/commercialhaskell/stack/issues/1255)
-    , bioCabalMacros :: Maybe (Path Abs File)
+    , bioCabalMacros :: Path Abs File
     } deriving Show
 
 -- | Files to get for a cabal package.
@@ -166,7 +196,7 @@ instance Show GetPackageFiles where
 
 -- | Warning generated when reading a package
 data PackageWarning
-    = UnlistedModulesWarning (Maybe String) [ModuleName]
+    = UnlistedModulesWarning NamedComponent [ModuleName]
       -- ^ Modules found that are not listed in cabal file
 
     -- TODO: bring this back - see
@@ -263,11 +293,13 @@ lpFiles = Set.unions . M.elems . lpComponentFiles
 -- | A location to install a package into, either snapshot or local
 data InstallLocation = Snap | Local
     deriving (Show, Eq)
+instance Semigroup InstallLocation where
+    Local <> _ = Local
+    _ <> Local = Local
+    Snap <> Snap = Snap
 instance Monoid InstallLocation where
     mempty = Snap
-    mappend Local _ = Local
-    mappend _ Local = Local
-    mappend Snap Snap = Snap
+    mappend = (<>)
 
 data InstalledPackageLocation = InstalledTo InstallLocation | ExtraGlobal
     deriving (Show, Eq)
@@ -351,7 +383,7 @@ dotCabalGetPath dcp =
 type InstalledMap = Map PackageName (InstallLocation, Installed)
 
 data Installed
-    = Library PackageIdentifier GhcPkgId (Maybe License)
+    = Library PackageIdentifier GhcPkgId (Maybe (Either SPDX.License License))
     | Executable PackageIdentifier
     deriving (Show, Eq)
 

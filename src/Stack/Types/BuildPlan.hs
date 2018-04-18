@@ -237,6 +237,7 @@ instance subdirs ~ Subdirs => FromJSON (WithJSONWarnings (PackageLocation subdir
         = (noJSONWarnings <$> withText "PackageLocation" (\t -> http t <|> file t) v)
         <|> repo v
         <|> archiveObject v
+        <|> github v
       where
         file t = pure $ PLFilePath $ T.unpack t
         http t =
@@ -268,6 +269,26 @@ instance subdirs ~ Subdirs => FromJSON (WithJSONWarnings (PackageLocation subdir
             , archiveSubdirs = subdirs :: Subdirs
             , archiveHash = msha'
             }
+
+        github = withObjectWarnings "PLArchive:github" $ \o -> do
+          GitHubRepo ghRepo <- o ..: "github"
+          commit <- o ..: "commit"
+          subdirs <- o ..:? "subdirs" ..!= DefaultSubdirs
+          return $ PLArchive Archive
+            { archiveUrl = "https://github.com/" <> ghRepo <> "/archive/" <> commit <> ".tar.gz"
+            , archiveSubdirs = subdirs
+            , archiveHash = Nothing
+            }
+
+-- An unexported newtype wrapper to hang a 'FromJSON' instance off of. Contains
+-- a GitHub user and repo name separated by a forward slash, e.g. "foo/bar".
+newtype GitHubRepo = GitHubRepo Text
+
+instance FromJSON GitHubRepo where
+    parseJSON = withText "GitHubRepo" $ \s -> do
+        case T.split (== '/') s of
+            [x, y] | not (T.null x || T.null y) -> return (GitHubRepo s)
+            _ -> fail "expecting \"user/repo\""
 
 -- | Name of an executable.
 newtype ExeName = ExeName { unExeName :: Text }
@@ -342,11 +363,14 @@ data DepInfo = DepInfo
 instance Store DepInfo
 instance NFData DepInfo
 
-instance Monoid DepInfo where
-    mempty = DepInfo mempty (fromVersionRange C.anyVersion)
-    DepInfo a x `mappend` DepInfo b y = DepInfo
+instance Semigroup DepInfo where
+    DepInfo a x <> DepInfo b y = DepInfo
         (mappend a b)
         (intersectVersionIntervals x y)
+
+instance Monoid DepInfo where
+    mempty = DepInfo mempty (fromVersionRange C.anyVersion)
+    mappend = (<>)
 
 data Component = CompLibrary
                | CompExecutable
@@ -369,10 +393,13 @@ newtype ModuleInfo = ModuleInfo
 instance Store ModuleInfo
 instance NFData ModuleInfo
 
+instance Semigroup ModuleInfo where
+  ModuleInfo x <> ModuleInfo y =
+    ModuleInfo (Map.unionWith Set.union x y)
+
 instance Monoid ModuleInfo where
   mempty = ModuleInfo mempty
-  mappend (ModuleInfo x) (ModuleInfo y) =
-    ModuleInfo (Map.unionWith Set.union x y)
+  mappend = (<>)
 
 moduleInfoVC :: VersionConfig ModuleInfo
 moduleInfoVC = storeVersionConfig "mi-v2" "8ImAfrwMVmqoSoEpt85pLvFeV3s="

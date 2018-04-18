@@ -18,7 +18,7 @@ module Main (main) where
 #ifndef HIDE_DEP_VERSIONS
 import qualified Build_stack
 #endif
-import           Stack.Prelude
+import           Stack.Prelude hiding (Display (..))
 import           Control.Monad.Reader (local)
 import           Control.Monad.Trans.Except (ExceptT)
 import           Control.Monad.Writer.Lazy (Writer)
@@ -38,7 +38,6 @@ import           Distribution.System (buildArch)
 import qualified Distribution.Text as Cabal (display)
 import           Distribution.Version (mkVersion')
 import           GHC.IO.Encoding (mkTextEncoding, textEncodingName)
-import           Lens.Micro
 import           Options.Applicative
 import           Options.Applicative.Help (errorHelp, stringChunk, vcatChunks)
 import           Options.Applicative.Builder.Extra
@@ -105,7 +104,7 @@ import qualified System.Directory as D
 import           System.Environment (getProgName, getArgs, withArgs)
 import           System.Exit
 import           System.FilePath (isValid, pathSeparator)
-import           System.IO (stderr, stdin, stdout, BufferMode(..), hPutStrLn, hGetEncoding, hSetEncoding)
+import           System.IO (stderr, stdin, stdout, BufferMode(..), hPutStrLn, hPrint, hGetEncoding, hSetEncoding)
 
 -- | Change the character encoding of the given Handle to transliterate
 -- on unsupported characters instead of throwing an exception
@@ -150,10 +149,10 @@ versionString' =
 #else
     warningString = unlines
       [ ""
-      , "Warning: this is an unsupported build that may have been built with different"
-      , "versions of dependencies and GHC than the officially release binaries, and"
-      , "therefore may not behave identically.  If you encounter problems, please try"
-      , "the latest official build by running 'stack upgrade --force-download'."
+      , "Warning: this is an unsupported build that may use different versions of"
+      , "dependencies and GHC than the officially released binaries, and therefore may"
+      , "not behave identically.  If you encounter problems, please try the latest"
+      , "official build by running 'stack upgrade --force-download'."
       ]
 #endif
 
@@ -198,7 +197,7 @@ main = do
           case fromException e of
               Just ec -> exitWith ec
               Nothing -> do
-                  printExceptionStderr e
+                  hPrint stderr e
                   exitFailure
 
 -- Vertically combine only the error component of the first argument with the
@@ -306,7 +305,9 @@ commandLineHandler currentDir progName isInterpreter = complicatedOptions
         addCommand' "unpack"
                     "Unpack one or more packages locally"
                     unpackCmd
-                    (some $ strArgument $ metavar "PACKAGE")
+                    ((,) <$> some (strArgument $ metavar "PACKAGE")
+                         <*> optional (textOption $ long "to" <>
+                                         help "Optional path to unpack the package into (will unpack into subdirectory)"))
         addCommand' "update"
                     "Update the package index"
                     updateCmd
@@ -337,7 +338,7 @@ commandLineHandler currentDir progName isInterpreter = complicatedOptions
                     ("Run hoogle, the Haskell API search engine. Use 'stack exec' syntax " ++
                      "to pass Hoogle arguments, e.g. stack hoogle -- --count=20")
                     hoogleCmd
-                    ((,,) <$> many (strArgument (metavar "ARG"))
+                    ((,,,) <$> many (strArgument (metavar "ARG"))
                           <*> boolFlags
                                   True
                                   "setup"
@@ -345,7 +346,10 @@ commandLineHandler currentDir progName isInterpreter = complicatedOptions
                                   idm
                           <*> switch
                                   (long "rebuild" <>
-                                   help "Rebuild the hoogle database"))
+                                   help "Rebuild the hoogle database")
+                          <*> switch
+                                  (long "server" <>
+                                   help "Start local Hoogle server"))
         )
 
       -- These are the only commands allowed in interpreter mode as well
@@ -506,7 +510,7 @@ secondaryCommandHandler args f =
     else do
       mExternalExec <- D.findExecutable cmd
       case mExternalExec of
-        Just ex -> runEnvNoLogging $ do
+        Just ex -> withProcessContextNoLogging $ do
           -- TODO show the command in verbose mode
           -- hPutStrLn stderr $ unwords $
           --   ["Running", "[" ++ ex, unwords (tail args) ++ "]"]
@@ -612,8 +616,8 @@ cleanCmd opts go =
   -- See issues #2010 and #3468 for why "stack clean --full" is not used
   -- within docker.
   case opts of
-    CleanFull{} -> withBuildConfigAndLock go (const (clean opts))
-    CleanShallow{} -> withBuildConfigAndLockNoDocker go (const (clean opts))
+    CleanFull{} -> withBuildConfigAndLockNoDocker go (const (clean opts))
+    CleanShallow{} -> withBuildConfigAndLock go (const (clean opts))
 
 -- | Helper for build and install commands
 buildCmd :: BuildOptsCLI -> GlobalOpts -> IO ()
@@ -648,10 +652,11 @@ uninstallCmd _ go = withConfigAndLock go $
       ]
 
 -- | Unpack packages to the filesystem
-unpackCmd :: [String] -> GlobalOpts -> IO ()
-unpackCmd names go = withConfigAndLock go $ do
+unpackCmd :: ([String], Maybe Text) -> GlobalOpts -> IO ()
+unpackCmd (names, Nothing) go = unpackCmd (names, Just ".") go
+unpackCmd (names, Just dstPath) go = withConfigAndLock go $ do
     mSnapshotDef <- mapM (makeConcreteResolver Nothing >=> loadResolver) (globalResolver go)
-    Stack.Fetch.unpackPackages mSnapshotDef "." names
+    Stack.Fetch.unpackPackages mSnapshotDef (T.unpack dstPath) names
 
 -- | Update the package index
 updateCmd :: () -> GlobalOpts -> IO ()
@@ -782,8 +787,8 @@ execCmd ExecOpts {..} go@GlobalOpts{..} =
                     (Just $ munlockFile lk)
                     (runRIO (lcConfig lc) $ do
                         config <- view configL
-                        menv <- liftIO $ configEnvOverrideSettings config plainEnvSettings
-                        withEnvOverride menv $ Nix.reexecWithOptionalShell
+                        menv <- liftIO $ configProcessContextSettings config plainEnvSettings
+                        withProcessContext menv $ Nix.reexecWithOptionalShell
                             (lcProjectRoot lc)
                             getCompilerVersion
                             (runRIO (lcConfig lc) $
@@ -799,8 +804,8 @@ execCmd ExecOpts {..} go@GlobalOpts{..} =
                       }
 
               config <- view configL
-              menv <- liftIO $ configEnvOverrideSettings config eoEnvSettings
-              withEnvOverride menv $ do
+              menv <- liftIO $ configProcessContextSettings config eoEnvSettings
+              withProcessContext menv $ do
                 -- Add RTS options to arguments
                 let argsWithRts args = if null eoRtsOptions
                             then args :: [String]
@@ -935,7 +940,9 @@ newCmd :: (NewOpts,InitOpts) -> GlobalOpts -> IO ()
 newCmd (newOpts,initOpts) go@GlobalOpts{..} =
     withMiniConfigAndLock go $ do
         dir <- new newOpts (forceOverwrite initOpts)
-        initProject IsNewCmd dir initOpts globalResolver
+        exists <- doesFileExist $ dir </> stackDotYaml
+        when (forceOverwrite initOpts || not exists) $
+            initProject IsNewCmd dir initOpts globalResolver
 
 -- | List the available templates.
 templatesCmd :: () -> GlobalOpts -> IO ()

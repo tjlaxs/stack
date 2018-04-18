@@ -35,7 +35,6 @@ import           System.Environment (getEnvironment)
 import           System.IO
 import           System.FileLock
 import           Stack.Dot
-import           Lens.Micro
 
 -- FIXME it seems wrong that we call lcLoadBuildConfig multiple times
 loadCompilerVersion :: GlobalOpts
@@ -207,9 +206,7 @@ loadConfigWithOpts go@GlobalOpts{..} inner = withRunnerGlobal go $ \runner -> do
         -- If we have been relaunched in a Docker container, perform in-container initialization
         -- (switch UID, etc.).  We do this after first loading the configuration since it must
         -- happen ASAP but needs a configuration.
-        case globalDockerEntrypoint of
-            Just de -> Docker.entrypoint (lcConfig lc) de
-            Nothing -> return ()
+        forM_ globalDockerEntrypoint $ Docker.entrypoint (lcConfig lc)
         liftIO $ inner lc
 
 withRunnerGlobal :: GlobalOpts -> (Runner -> IO a) -> IO a

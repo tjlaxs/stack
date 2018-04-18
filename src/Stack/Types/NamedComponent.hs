@@ -17,29 +17,29 @@ module Stack.Types.NamedComponent
 import Stack.Prelude
 import Stack.Types.PackageName
 import qualified Data.Set as Set
-import Data.ByteString (ByteString)
 import qualified Data.Text as T
-import Data.Text.Encoding (encodeUtf8, decodeUtf8)
 
 -- | A single, fully resolved component of a package
 data NamedComponent
     = CLib
+    | CInternalLib !Text
     | CExe !Text
     | CTest !Text
     | CBench !Text
     deriving (Show, Eq, Ord)
 
-renderComponent :: NamedComponent -> ByteString
+renderComponent :: NamedComponent -> Text
 renderComponent CLib = "lib"
-renderComponent (CExe x) = "exe:" <> encodeUtf8 x
-renderComponent (CTest x) = "test:" <> encodeUtf8 x
-renderComponent (CBench x) = "bench:" <> encodeUtf8 x
+renderComponent (CInternalLib x) = "internal-lib:" <> x
+renderComponent (CExe x) = "exe:" <> x
+renderComponent (CTest x) = "test:" <> x
+renderComponent (CBench x) = "bench:" <> x
 
 renderPkgComponents :: [(PackageName, NamedComponent)] -> Text
 renderPkgComponents = T.intercalate " " . map renderPkgComponent
 
 renderPkgComponent :: (PackageName, NamedComponent) -> Text
-renderPkgComponent (pkg, comp) = packageNameText pkg <> ":" <> decodeUtf8 (renderComponent comp)
+renderPkgComponent (pkg, comp) = packageNameText pkg <> ":" <> renderComponent comp
 
 exeComponents :: Set NamedComponent -> Set Text
 exeComponents = Set.fromList . mapMaybe mExeName . Set.toList
