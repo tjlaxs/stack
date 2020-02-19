@@ -1,3 +1,27 @@
+{- stack script
+    --resolver lts-11.22
+    --install-ghc
+    --ghc-options -Wall
+    --package Cabal
+    --package aeson
+    --package bytestring
+    --package case-insensitive
+    --package conduit
+    --package conduit-combinators
+    --package cryptohash
+    --package directory
+    --package extra
+    --package http-conduit
+    --package http-types
+    --package mime-types
+    --package process
+    --package resourcet
+    --package shake
+    --package tar
+    --package text
+    --package zip-archive
+    --package zlib
+-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -24,6 +48,7 @@ import System.Process
 import qualified Codec.Archive.Tar as Tar
 import qualified Codec.Archive.Zip as Zip
 import qualified Codec.Compression.GZip as GZip
+import Crypto.Hash (Digest, SHA256 (..), digestToHexByteString, hash)
 import Data.Aeson
 import qualified Data.CaseInsensitive as CI
 import Data.Conduit
@@ -46,16 +71,19 @@ main =
                      , shakeChange = ChangeModtimeAndDigestInput }
         options $
         \flags args -> do
-            -- 'stack list-dependencies' just ensures that 'stack.cabal' is generated from hpack
-            _ <- readProcess "stack" ["list-dependencies"] ""
+            -- build the default value of type Global, with predefined constants
+
+            -- 'stack build --dry-run' just ensures that 'stack.cabal' is generated from hpack
+            _ <- readProcess "stack" ["build", "--dry-run"] ""
             gStackPackageDescription <-
                 packageDescription <$> readGenericPackageDescription silent "stack.cabal"
+            gGpgKey <- maybe defaultGpgKey Just <$> lookupEnv gpgKeyEnvVar
             gGithubAuthToken <- lookupEnv githubAuthTokenEnvVar
             gGitRevCount <- length . lines <$> readProcess "git" ["rev-list", "HEAD"] ""
             gGitSha <- trim <$> readProcess "git" ["rev-parse", "HEAD"] ""
             gHomeDir <- getHomeDirectory
-            let gGpgKey = "0x575159689BEFB442"
-                gAllowDirty = False
+
+            let gAllowDirty = False
                 gGithubReleaseTag = Nothing
                 Platform arch _ = buildPlatform
                 gArch = arch
@@ -64,7 +92,10 @@ main =
                 gTestHaddocks = True
                 gProjectRoot = "" -- Set to real value velow.
                 gBuildArgs = []
+                gCertificateName = Nothing
+                gUploadOnly = False
                 global0 = foldl (flip id) Global{..} flags
+
             -- Need to get paths after options since the '--arch' argument can effect them.
             projectRoot' <- getStackPath global0 "project-root"
             let global = global0
@@ -79,8 +110,10 @@ main =
 options :: [OptDescr (Either String (Global -> Global))]
 options =
     [ Option "" [gpgKeyOptName]
-        (ReqArg (\v -> Right $ \g -> g{gGpgKey = v}) "USER-ID")
-        "GPG user ID to sign distribution package with."
+        (ReqArg (\v -> Right $ \g -> g{gGpgKey = Just v}) "USER-ID")
+        ("GPG user ID to sign distribution package with (defaults to " ++
+         gpgKeyEnvVar ++
+         " environment variable).")
     , Option "" [allowDirtyOptName] (NoArg $ Right $ \g -> g{gAllowDirty = True})
         "Allow a dirty working tree for release."
     , Option "" [githubAuthTokenOptName]
@@ -113,6 +146,11 @@ options =
             (\v -> Right $ \g -> g{gBuildArgs = gBuildArgs g ++ words v})
             "\"ARG1 ARG2 ...\"")
         "Additional arguments to pass to 'stack build'."
+    , Option "" [certificateNameOptName]
+        (ReqArg (\v -> Right $ \g -> g{gCertificateName = Just v}) "NAME")
+        "Certificate name for code signing on Windows"
+    , Option "" [uploadOnlyOptName] (NoArg $ Right $ \g -> g{gUploadOnly = True})
+        "Just upload an existing file, but don't try to build it."
     ]
 
 -- | Shake rules.
@@ -133,21 +171,20 @@ rules global@Global{..} args = do
         need [releaseCheckDir </> binaryExeFileName]
 
     phony uploadPhony $
-        mapM_ (\f -> need [releaseDir </> f <.> uploadExt]) binaryPkgFileNames
+        mapM_ (\f -> need [releaseDir </> f <.> uploadExt]) binaryPkgAndSigFileNames
 
     phony buildPhony $
-        mapM_ (\f -> need [releaseDir </> f]) binaryPkgFileNames
-
-    distroPhonies ubuntuDistro ubuntuVersions debPackageFileName
-    distroPhonies centosDistro centosVersions rpmPackageFileName
+        mapM_ (\f -> need [releaseDir </> f]) binaryPkgAndSigFileNames
 
     releaseDir </> "*" <.> uploadExt %> \out -> do
         let srcFile = dropExtension out
-            mUploadLabel =
-                if takeExtension srcFile == ascExt
-                    then fmap (++ " (GPG signature)") gUploadLabel
-                    else gUploadLabel
-        uploadToGithubRelease global srcFile mUploadLabel
+            -- mUploadLabel =
+            --     case takeExtension srcFile of
+            --         e | e == ascExt -> fmap (++ " (GPG signature)") gUploadLabel
+            --           | e == sha256Ext -> fmap (++ " (SHA256 checksum)") gUploadLabel
+            --           | otherwise -> gUploadLabel
+        need [srcFile]
+        uploadToGithubRelease global srcFile Nothing
         copyFileChanged srcFile out
 
     releaseCheckDir </> binaryExeFileName %> \out -> do
@@ -156,19 +193,22 @@ rules global@Global{..} args = do
         when (not gAllowDirty && not (null (trim dirty))) $
             error ("Working tree is dirty.  Use --" ++ allowDirtyOptName ++ " option to continue anyway.")
         withTempDir $ \tmpDir -> do
-            let cmd0 c = cmd (gProjectRoot </> releaseBinDir </> binaryName </> stackExeFileName)
+            let cmd0 c = cmd [gProjectRoot </> releaseBinDir </> binaryName </> stackExeFileName]
                     (stackArgs global)
                     ["--local-bin-path=" ++ tmpDir]
                     c
-            () <- cmd0 "install" gBuildArgs $ concat $ concat
-                [["--pedantic --no-haddock-deps"], [" --haddock" | gTestHaddocks]]
-            () <- cmd0 (Cwd "etc/scripts") "install" "cabal-install"
+            -- 'stack.cabal' is autogenerated by 'stack', delete to ensure not stale
+            _ <- liftIO $ tryJust (guard . isDoesNotExistError) (removeFile "stack.cabal")
+            () <- cmd0 "install" gBuildArgs integrationTestFlagArgs $ concat $ concat
+                [["--pedantic --no-haddock-deps "]
+                ,[" --haddock" | gTestHaddocks]
+                ,[" stack"]]
             let cmd' c = cmd (AddPath [tmpDir] []) stackProgName (stackArgs global) c
-            () <- cmd' "test" gBuildArgs "--pedantic --flag stack:integration-tests"
+            () <- cmd' "test" gBuildArgs integrationTestFlagArgs "--pedantic --exec stack-integration-test stack"
             return ()
         copyFileChanged (releaseBinDir </> binaryName </> stackExeFileName) out
 
-    releaseDir </> binaryPkgZipFileName %> \out -> do
+    unless gUploadOnly $ releaseDir </> binaryPkgZipFileName %> \out -> do
         stageFiles <- getBinaryPkgStageFiles
         putNormal $ "zip " ++ out
         liftIO $ do
@@ -185,7 +225,7 @@ rules global@Global{..} args = do
             let archive = foldr Zip.addEntryToArchive Zip.emptyArchive entries
             L8.writeFile out (Zip.fromArchive archive)
 
-    releaseDir </> binaryPkgTarGzFileName %> \out -> do
+    unless gUploadOnly $ releaseDir </> binaryPkgTarGzFileName %> \out -> do
         stageFiles <- getBinaryPkgStageFiles
         writeTarGz out releaseStageDir stageFiles
 
@@ -197,7 +237,7 @@ rules global@Global{..} args = do
             (dropDirectoryPrefix (releaseStageDir </> binaryName) out)
             out
 
-    releaseDir </> binaryExeFileName %> \out -> do
+    unless gUploadOnly $ releaseDir </> binaryExeFileName %> \out -> do
         need [releaseBinDir </> binaryName </> stackExeFileName]
         (Stdout versionOut) <- cmd (releaseBinDir </> binaryName </> stackExeFileName) "--version"
         when (not gAllowDirty && "dirty" `isInfixOf` lower versionOut) $
@@ -208,16 +248,19 @@ rules global@Global{..} args = do
                 -- Windows doesn't have or need a 'strip' command, so skip it.
                 -- Instead, we sign the executable
                 liftIO $ copyFile (releaseBinDir </> binaryName </> stackExeFileName) out
-                actionOnException
-                    (command_ [] "c:\\Program Files\\Microsoft SDKs\\Windows\\v7.1\\Bin\\signtool.exe"
-                        ["sign"
-                        ,"/v"
-                        ,"/d", synopsis gStackPackageDescription
-                        ,"/du", homepage gStackPackageDescription
-                        ,"/n", "FP Complete, Corporation"
-                        ,"/t", "http://timestamp.verisign.com/scripts/timestamp.dll"
-                        ,out])
-                    (removeFile out)
+                case gCertificateName of
+                    Nothing -> return ()
+                    Just certName ->
+                        actionOnException
+                            (command_ [] "c:\\Program Files\\Microsoft SDKs\\Windows\\v7.1\\Bin\\signtool.exe"
+                                ["sign"
+                                ,"/v"
+                                ,"/d", synopsis gStackPackageDescription
+                                ,"/du", homepage gStackPackageDescription
+                                ,"/n", certName
+                                ,"/t", "http://timestamp.verisign.com/scripts/timestamp.dll"
+                                ,out])
+                            (removeFile out)
             Linux ->
                 cmd "strip -p --strip-unneeded --remove-section=.comment -o"
                     [out, releaseBinDir </> binaryName </> stackExeFileName]
@@ -225,133 +268,70 @@ rules global@Global{..} args = do
                 cmd "strip -o"
                     [out, releaseBinDir </> binaryName </> stackExeFileName]
 
+    releaseDir </> binaryInstallerFileName %> \out -> do
+        need [releaseDir </> binaryExeFileName]
+        need [releaseDir </> binaryInstallerNSIFileName]
+
+        actionOnException
+            (command_ [Cwd releaseDir] "c:\\Program Files (x86)\\NSIS\\Unicode\\makensis.exe"
+                [ "-V3"
+                , binaryInstallerNSIFileName])
+            (removeFile out)
+
+    releaseDir </> binaryInstallerNSIFileName %> \out -> do
+        need ["etc" </> "scripts" </> "build-stack-installer" <.> "hs"]
+        cmd "stack etc/scripts/build-stack-installer.hs" 
+            [ binaryExeFileName
+            , binaryInstallerFileName
+            , out
+            ] :: Action ()
+
     releaseDir </> "*" <.> ascExt %> \out -> do
         need [out -<.> ""]
         _ <- liftIO $ tryJust (guard . isDoesNotExistError) (removeFile out)
-        cmd ("gpg " ++ gpgOptions ++ " --detach-sig --armor")
-            [ "-u", gGpgKey
-            , dropExtension out ]
+        case gGpgKey of
+            Nothing -> error "No GPG key specified"
+            Just gpgKey ->
+                cmd ("gpg " ++ gpgOptions ++ " --detach-sig --armor")
+                    [ "-u", gpgKey
+                    , dropExtension out ]
+
+    releaseDir </> "*" <.> sha256Ext %> \out -> do
+        need [out -<.> ""]
+        bs <- liftIO $ do
+            _ <- tryJust (guard . isDoesNotExistError) (removeFile out)
+            S8.readFile (dropExtension out)
+        writeFileChanged
+          out
+          ( S8.unpack (digestToHexByteString (hash bs :: Digest SHA256)) ++
+            "  " ++
+            takeFileName (dropExtension out) ++
+            "\n" )
 
     releaseBinDir </> binaryName </> stackExeFileName %> \out -> do
         alwaysRerun
+        -- 'stack.cabal' is autogenerated by 'stack', delete to ensure not stale
+        _ <- liftIO $ tryJust (guard . isDoesNotExistError) (removeFile "stack.cabal")
         actionOnException
             (cmd stackProgName
                 (stackArgs global)
                 ["--local-bin-path=" ++ takeDirectory out]
                 "install"
                 gBuildArgs
-                "--pedantic")
-            (removeFile out)
-
-    debDistroRules ubuntuDistro ubuntuVersions
-    rpmDistroRules centosDistro centosVersions
+                integrationTestFlagArgs
+                "--pedantic"
+                "stack")
+            (tryJust (guard . isDoesNotExistError) (removeFile out))
 
   where
 
-    debDistroRules debDistro0 debVersions = do
-        let anyVersion0 = anyDistroVersion debDistro0
-        distroVersionDir anyVersion0 </> debPackageFileName anyVersion0 <.> uploadExt %> \out -> do
-           let DistroVersion{..} = distroVersionFromPath out debVersions
-               pkgFile = dropExtension out
-           need [pkgFile]
-           () <- cmd "deb-s3 upload --preserve-versions --bucket download.fpcomplete.com"
-               [ "--sign=" ++ gGpgKey
-               , "--gpg-options=" ++ replace "-" "\\-" gpgOptions
-               , "--prefix=" ++ dvDistro
-               , "--codename=" ++ dvCodeName
-               , pkgFile ]
-           -- Also upload to the old, incorrect location for people who still have their systems
-           -- configured with it.
-           () <- cmd "deb-s3 upload --preserve-versions --bucket download.fpcomplete.com"
-               [ "--sign=" ++ gGpgKey
-               , "--gpg-options=" ++ replace "-" "\\-" gpgOptions
-               , "--prefix=" ++ dvDistro ++ "/" ++ dvCodeName
-               , pkgFile ]
-           copyFileChanged pkgFile out
-        distroVersionDir anyVersion0 </> debPackageFileName anyVersion0 %> \out -> do
-            docFiles <- getDocFiles
-            let dv@DistroVersion{..} = distroVersionFromPath out debVersions
-                inputFiles = concat
-                    [[debStagedExeFile dv
-                     ,debStagedBashCompletionFile dv]
-                    ,map (debStagedDocDir dv </>) docFiles]
-            need inputFiles
-            cmd "fpm -f -s dir -t deb"
-                "--deb-recommends git --deb-recommends gnupg"
-                "-d g++ -d gcc -d libc6-dev -d libffi-dev -d libgmp-dev -d make -d xz-utils -d zlib1g-dev -d netbase -d ca-certificates"
-                ["-n", stackProgName
-                ,"-C", debStagingDir dv
-                ,"-v", debPackageVersionStr dv
-                ,"-p", out
-                ,"-m", maintainer gStackPackageDescription
-                ,"--description", synopsis gStackPackageDescription
-                ,"--license", display (license gStackPackageDescription)
-                ,"--url", homepage gStackPackageDescription]
-                (map (dropDirectoryPrefix (debStagingDir dv)) inputFiles)
-        debStagedExeFile anyVersion0 %> \out -> do
-            copyFileChanged (releaseDir </> binaryExeFileName) out
-        debStagedBashCompletionFile anyVersion0 %> \out -> do
-            let dv = distroVersionFromPath out debVersions
-            writeBashCompletion (debStagedExeFile dv) out
-        debStagedDocDir anyVersion0 ++ "//*" %> \out -> do
-            let dv@DistroVersion{..} = distroVersionFromPath out debVersions
-                origFile = dropDirectoryPrefix (debStagedDocDir dv) out
-            copyFileChanged origFile out
-
-    rpmDistroRules rpmDistro0 rpmVersions = do
-        let anyVersion0 = anyDistroVersion rpmDistro0
-        distroVersionDir anyVersion0 </> rpmPackageFileName anyVersion0 <.> uploadExt %> \out -> do
-           let DistroVersion{..} = distroVersionFromPath out rpmVersions
-               pkgFile = dropExtension out
-           need [pkgFile]
-           let rpmmacrosFile = gHomeDir </> ".rpmmacros"
-           rpmmacrosExists <- liftIO $ System.Directory.doesFileExist rpmmacrosFile
-           when rpmmacrosExists $
-               error ("'" ++ rpmmacrosFile ++ "' already exists.  Move it out of the way first.")
-           actionFinally
-               (do writeFileLines rpmmacrosFile
-                       [ "%_signature gpg"
-                       , "%_gpg_name " ++ gGpgKey ]
-                   () <- cmd "rpm-s3 --verbose --sign --bucket=download.fpcomplete.com"
-                       [ "--repopath=" ++ dvDistro ++ "/" ++ dvVersion
-                       , pkgFile ]
-                   return ())
-               (liftIO $ removeFile rpmmacrosFile)
-           copyFileChanged pkgFile out
-        distroVersionDir anyVersion0 </> rpmPackageFileName anyVersion0 %> \out -> do
-            docFiles <- getDocFiles
-            let dv@DistroVersion{..} = distroVersionFromPath out rpmVersions
-                inputFiles = concat
-                    [[rpmStagedExeFile dv
-                     ,rpmStagedBashCompletionFile dv]
-                    ,map (rpmStagedDocDir dv </>) docFiles]
-            need inputFiles
-            cmd "fpm -s dir -t rpm"
-                "-d perl -d make -d automake -d gcc -d gmp-devel -d libffi -d zlib -d xz -d tar"
-                ["-n", stackProgName
-                ,"-C", rpmStagingDir dv
-                ,"-v", rpmPackageVersionStr dv
-                ,"--iteration", rpmPackageIterationStr dv
-                ,"-p", out
-                ,"-m", maintainer gStackPackageDescription
-                ,"--description", synopsis gStackPackageDescription
-                ,"--license", display (license gStackPackageDescription)
-                ,"--url", homepage gStackPackageDescription]
-                (map (dropDirectoryPrefix (rpmStagingDir dv)) inputFiles)
-        rpmStagedExeFile anyVersion0 %> \out -> do
-            copyFileChanged (releaseDir </> binaryExeFileName) out
-        rpmStagedBashCompletionFile anyVersion0 %> \out -> do
-            let dv = distroVersionFromPath out rpmVersions
-            writeBashCompletion (rpmStagedExeFile dv) out
-        rpmStagedDocDir anyVersion0 ++ "//*" %> \out -> do
-            let dv@DistroVersion{..} = distroVersionFromPath out rpmVersions
-                origFile = dropDirectoryPrefix (rpmStagedDocDir dv) out
-            copyFileChanged origFile out
-
-    writeBashCompletion stagedStackExeFile out = do
-        need [stagedStackExeFile]
-        (Stdout bashCompletionScript) <- cmd [stagedStackExeFile] "--bash-completion-script" [stackProgName]
-        writeFileChanged out bashCompletionScript
+    integrationTestFlagArgs =
+        -- Explicitly enabling 'hide-dependency-versions' and 'supported-build' to work around
+        -- https://github.com/commercialhaskell/stack/issues/4960
+        [ "--flag=stack:integration-tests"
+        , "--flag=stack:hide-dependency-versions"
+        , "--flag=stack:supported-build"
+        ]
 
     getBinaryPkgStageFiles = do
         docFiles <- getDocFiles
@@ -363,44 +343,32 @@ rules global@Global{..} args = do
 
     getDocFiles = getDirectoryFiles "." ["LICENSE", "*.md", "doc//*.md"]
 
-    distroVersionFromPath path versions =
-        let path' = dropDirectoryPrefix releaseDir path
-            version = takeDirectory1 (dropDirectory1 path')
-        in DistroVersion (takeDirectory1 path') version (lookupVersionCodeName version versions)
-
-    distroPhonies distro0 versions0 makePackageFileName =
-        forM_ versions0 $ \(version0,_) -> do
-            let dv@DistroVersion{..} = DistroVersion distro0 version0 (lookupVersionCodeName version0 versions0)
-            phony (distroUploadPhony dv) $ need [distroVersionDir dv </> makePackageFileName dv <.> uploadExt]
-            phony (distroBuildPhony dv) $ need [distroVersionDir dv </> makePackageFileName dv]
-
-    lookupVersionCodeName version versions =
-        fromMaybe (error $ "lookupVersionCodeName: could not find " ++ show version ++ " in " ++ show versions) $
-            lookup version versions
-
-
     releasePhony = "release"
     checkPhony = "check"
     uploadPhony = "upload"
     cleanPhony = "clean"
     buildPhony = "build"
-    distroUploadPhony DistroVersion{..} = "upload-" ++ dvDistro ++ "-" ++ dvVersion
-    distroBuildPhony DistroVersion{..} = "build-" ++ dvDistro ++ "-" ++ dvVersion
 
     releaseCheckDir = releaseDir </> "check"
     releaseStageDir = releaseDir </> "stage"
     releaseBinDir = releaseDir </> "bin"
-    distroVersionDir DistroVersion{..} = releaseDir </> dvDistro </> dvVersion
 
-    binaryPkgFileNames = binaryPkgArchiveFileNames ++ binaryPkgSignatureFileNames
-    binaryPkgSignatureFileNames = map (<.> ascExt) binaryPkgArchiveFileNames
-    binaryPkgArchiveFileNames =
+    binaryPkgAndSigFileNames =
+        concatMap sigHashFileNames binaryPkgFileNames
+    sigHashFileNames x =
+        case gGpgKey of
+            Nothing -> [x, x <.> sha256Ext]
+            Just _ -> [x, x <.> sha256Ext, x <.> ascExt]
+    binaryPkgFileNames =
         case platformOS of
-            Windows -> [binaryPkgZipFileName, binaryPkgTarGzFileName]
-            _ -> [binaryPkgTarGzFileName]
+            Windows -> [binaryExeFileName, binaryPkgZipFileName, binaryPkgTarGzFileName, binaryInstallerFileName]
+            _ -> [binaryExeFileName, binaryPkgTarGzFileName]
     binaryPkgZipFileName = binaryName <.> zipExt
     binaryPkgTarGzFileName = binaryName <.> tarGzExt
-    binaryExeFileName = binaryName <.> exe
+    -- Adding '-bin' to name to work around https://github.com/commercialhaskell/stack/issues/4961
+    binaryExeFileName = binaryName ++ "-bin" <.> exe
+    binaryInstallerNSIFileName = binaryName ++ "-installer" <.> nsiExt
+    binaryInstallerFileName = binaryName ++ "-installer" <.> exe
     binaryName =
         concat
             [ stackProgName
@@ -413,49 +381,19 @@ rules global@Global{..} args = do
             , if null gBinarySuffix then "" else "-" ++ gBinarySuffix ]
     stackExeFileName = stackProgName <.> exe
 
-    debStagedDocDir dv = debStagingDir dv </> "usr/share/doc" </> stackProgName
-    debStagedBashCompletionFile dv = debStagingDir dv </> "etc/bash_completion.d/stack"
-    debStagedExeFile dv = debStagingDir dv </> "usr/bin/stack"
-    debStagingDir dv = distroVersionDir dv </> debPackageName dv
-    debPackageFileName dv = debPackageName dv <.> debExt
-    debPackageName dv = stackProgName ++ "_" ++ debPackageVersionStr dv ++ "_amd64"
-    debPackageVersionStr DistroVersion{..} = stackVersionStr global ++ "-0~" ++ dvCodeName
-
-    rpmStagedDocDir dv = rpmStagingDir dv </> "usr/share/doc" </> (stackProgName ++ "-" ++ rpmPackageVersionStr dv)
-    rpmStagedBashCompletionFile dv = rpmStagingDir dv </> "etc/bash_completion.d/stack"
-    rpmStagedExeFile dv = rpmStagingDir dv </> "usr/bin/stack"
-    rpmStagingDir dv = distroVersionDir dv </> rpmPackageName dv
-    rpmPackageFileName dv = rpmPackageName dv <.> rpmExt
-    rpmPackageName dv = stackProgName ++ "-" ++ rpmPackageVersionStr dv ++ "-" ++ rpmPackageIterationStr dv ++ ".x86_64"
-    rpmPackageIterationStr DistroVersion{..} = "0." ++ dvCodeName
-    rpmPackageVersionStr _ = stackVersionStr global
-
-    ubuntuVersions =
-        [ ("14.04", "trusty")
-        , ("16.04", "xenial") ]
-    centosVersions =
-        [ ("7", "el7")
-        , ("6", "el6") ]
-
-    ubuntuDistro = "ubuntu"
-    centosDistro = "centos"
-
-    anyDistroVersion distro = DistroVersion distro "*" "*"
-
     zipExt = ".zip"
     tarGzExt = tarExt <.> gzExt
     gzExt = ".gz"
     tarExt = ".tar"
     ascExt = ".asc"
+    sha256Ext = ".sha256"
     uploadExt = ".upload"
-    debExt = ".deb"
-    rpmExt = ".rpm"
-
+    nsiExt = ".nsi"
 
 -- | Upload file to Github release.
 uploadToGithubRelease :: Global -> FilePath -> Maybe String -> Action ()
 uploadToGithubRelease global@Global{..} file mUploadLabel = do
-    need [file]
+    -- TODO: consider using https://github.com/tfausak/github-release
     putNormal $ "Uploading to Github: " ++ file
     GithubRelease{..} <- getGithubRelease
     resp <- liftIO $ callGithubApi global
@@ -549,7 +487,7 @@ platformOS =
 releaseDir :: FilePath
 releaseDir = "_release"
 
--- | @GITHUB_AUTH_TOKEN@ environment variale name.
+-- | @GITHUB_AUTH_TOKEN@ environment variable name.
 githubAuthTokenEnvVar :: String
 githubAuthTokenEnvVar = "GITHUB_AUTH_TOKEN"
 
@@ -560,6 +498,14 @@ githubAuthTokenOptName = "github-auth-token"
 -- | @--github-release-tag@ command-line option name.
 githubReleaseTagOptName :: String
 githubReleaseTagOptName = "github-release-tag"
+
+-- | Default GPG key ID for signing bindists
+defaultGpgKey :: Maybe String
+defaultGpgKey = Nothing
+
+-- | @STACK_RELEASE_GPG_KEY@ environment variable name.
+gpgKeyEnvVar :: String
+gpgKeyEnvVar =  "STACK_RELEASE_GPG_KEY"
 
 -- | @--gpg-key@ command-line option name.
 gpgKeyOptName :: String
@@ -593,9 +539,17 @@ buildArgsOptName = "build-args"
 staticOptName :: String
 staticOptName = "static"
 
+-- | @--certificate-name@ command-line option name.
+certificateNameOptName :: String
+certificateNameOptName = "certificate-name"
+
+-- | @--upload-only@ command-line option name.
+uploadOnlyOptName :: String
+uploadOnlyOptName = "upload-only"
+
 -- | Arguments to pass to all 'stack' invocations.
 stackArgs :: Global -> [String]
-stackArgs Global{..} = ["--install-ghc", "--arch=" ++ display gArch]
+stackArgs Global{..} = ["--install-ghc", "--arch=" ++ display gArch, "--interleaved-output"]
 
 -- | Name of the 'stack' program.
 stackProgName :: FilePath
@@ -634,7 +588,7 @@ instance FromJSON GithubReleaseAsset where
 -- | Global values and options.
 data Global = Global
     { gStackPackageDescription :: !PackageDescription
-    , gGpgKey :: !String
+    , gGpgKey :: !(Maybe String)
     , gAllowDirty :: !Bool
     , gGithubAuthToken :: !(Maybe String)
     , gGithubReleaseTag :: !(Maybe String)
@@ -644,7 +598,10 @@ data Global = Global
     , gHomeDir :: !FilePath
     , gArch :: !Arch
     , gBinarySuffix :: !String
-    , gUploadLabel :: (Maybe String)
+    , gUploadLabel :: !(Maybe String)
     , gTestHaddocks :: !Bool
-    , gBuildArgs :: [String] }
+    , gBuildArgs :: [String]
+    , gCertificateName :: !(Maybe String)
+    , gUploadOnly :: !Bool
+    }
     deriving (Show)

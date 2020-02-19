@@ -1,11 +1,19 @@
 name: stack
-version: '1.8.0'
+version: '2.2.0'
 synopsis: The Haskell Tool Stack
-description: ! 'Please see the README.md for usage information, and
-  the wiki on Github for more details.  Also, note that
-  the API for the library is not currently stable, and may
+description: |
+  Please see the documentation at <https://docs.haskellstack.org>
+  for usage information.
+  .
+  If building a 'stack' executable for distribution, please download the
+  source code from <https://github.com/commercialhaskell/stack/releases>
+  and build it using Stack itself in order to ensure identical behaviour
+  to official binaries.  This package on Hackage is provided for convenience
+  and bootstrapping purposes.
+  .
+  Note that the API for the library is not currently stable, and may
   change significantly, even between minor releases. It is
-  currently only intended for use by the executable.'
+  currently only intended for use by the executable.
 category: Development
 author: Commercial Haskell SIG
 maintainer: manny@fpcomplete.com
@@ -18,33 +26,40 @@ custom-setup:
   - Cabal
   - filepath
 extra-source-files:
+# note: leaving out 'package.yaml' because it causes confusion with hackage metadata revisions
 - CONTRIBUTING.md
 - ChangeLog.md
 - README.md
-- doc/*.md
-- package.yaml
-- src/setup-shim/StackSetupShim.hs
 - stack.yaml
+- snapshot.yaml
+- doc/*.md
+- src/setup-shim/StackSetupShim.hs
 - test/package-dump/ghc-7.10.txt
 - test/package-dump/ghc-7.8.4-osx.txt
 - test/package-dump/ghc-7.8.txt
+- test/package-dump/ghc-head.txt
+- src/test/Stack/Untar/test1.tar.gz
+- src/test/Stack/Untar/test2.tar.gz
 ghc-options:
 - -Wall
 - -fwarn-tabs
 - -fwarn-incomplete-uni-patterns
 - -fwarn-incomplete-record-updates
+- -optP-Wno-nonportable-include-path # workaround [Filename case on macOS · Issue #4739 · haskell/cabal](https://github.com/haskell/cabal/issues/4739)
 dependencies:
 - Cabal
 - aeson
 - annotated-wl-pprint
 - ansi-terminal
+- array
 - async
 - attoparsec
 - base >=4.10 && < 5
 - base64-bytestring
 - bytestring
+- colour
 - conduit
-- conduit-extra >= 1.2.3.1
+- conduit-extra
 - containers
 - cryptonite
 - cryptonite-conduit
@@ -60,17 +75,17 @@ dependencies:
 - generic-deriving
 - hackage-security
 - hashable
+- hi-file-parser
 - hpack
 - hpc
 - http-client
 - http-client-tls
 - http-conduit
+- http-download
 - http-types
 - memory
 - microlens
 - mintty
-# TODO remove dep when persistent drops monad-logger
-- monad-logger
 - mono-traversable
 - mtl
 - mustache
@@ -78,6 +93,9 @@ dependencies:
 - network-uri
 - open-browser
 - optparse-applicative
+- pantry >= 0.2
+- casa-client
+- casa-types
 - path
 - path-io
 - persistent
@@ -88,28 +106,27 @@ dependencies:
 - process
 - project-template
 - regex-applicative-text
-- resourcet
 - retry
 - rio
+- rio-prettyprint
 - semigroups
 - split
 - stm
-- store
-- store-core
 - streaming-commons
 - tar
 - template-haskell
 - temporary
+- terminal-size
 - text
 - text-metrics
 - th-reify-many
 - time
 - tls
 - transformers
-- typed-process >= 0.2.1.0
+- typed-process
 - unicode-transforms
 - unix-compat
-- unliftio >= 0.2.4.0
+- unliftio
 - unordered-containers
 - vector
 - yaml
@@ -125,22 +142,19 @@ when:
     build-tools:
     - hsc2hs
     dependencies:
-    - bindings-uname
     - unix
 library:
   source-dirs: src/
   ghc-options:
   - -fwarn-identities
+  generated-exposed-modules:
+  - Paths_stack
   exposed-modules:
   - Control.Concurrent.Execute
-  - Data.Aeson.Extended
   - Data.Attoparsec.Args
   - Data.Attoparsec.Combinators
   - Data.Attoparsec.Interpreter
-  - Data.IORef.RunOnce
-  - Data.Store.VersionTagged
-  - Network.HTTP.Download
-  - Network.HTTP.Download.Verified
+  - Data.Monoid.Map
   - Network.HTTP.StackClient
   - Options.Applicative.Args
   - Options.Applicative.Builder.Extra
@@ -148,7 +162,6 @@ library:
   - Path.CheckInstall
   - Path.Extra
   - Path.Find
-  - Paths_stack
   - Stack.Build
   - Stack.Build.Cache
   - Stack.Build.ConstructPlan
@@ -161,26 +174,25 @@ library:
   - Stack.Clean
   - Stack.Config
   - Stack.Config.Build
-  - Stack.Config.Urls
   - Stack.Config.Docker
   - Stack.Config.Nix
   - Stack.ConfigCmd
   - Stack.Constants
   - Stack.Constants.Config
   - Stack.Coverage
+  - Stack.DefaultColorWhen
   - Stack.Docker
-  - Stack.Docker.GlobalDB
   - Stack.Dot
-  - Stack.Fetch
   - Stack.FileWatch
+  - Stack.Freeze
   - Stack.GhcPkg
   - Stack.Ghci
   - Stack.Ghci.Script
   - Stack.Hoogle
   - Stack.IDE
-  - Stack.Image
   - Stack.Init
   - Stack.Ls
+  - Stack.Lock
   - Stack.New
   - Stack.Nix
   - Stack.Options.BenchParser
@@ -192,6 +204,7 @@ library:
   - Stack.Options.DockerParser
   - Stack.Options.DotParser
   - Stack.Options.ExecParser
+  - Stack.Options.FreezeParser
   - Stack.Options.GhcBuildParser
   - Stack.Options.GhciParser
   - Stack.Options.GhcVariantParser
@@ -205,70 +218,59 @@ library:
   - Stack.Options.ResolverParser
   - Stack.Options.ScriptParser
   - Stack.Options.SDistParser
-  - Stack.Options.SolverParser
   - Stack.Options.TestParser
   - Stack.Options.Utils
   - Stack.Package
   - Stack.PackageDump
-  - Stack.PackageIndex
-  - Stack.PackageLocation
   - Stack.Path
   - Stack.Prelude
-  - Stack.PrettyPrint
   - Stack.Runners
   - Stack.Script
   - Stack.SDist
   - Stack.Setup
   - Stack.Setup.Installed
   - Stack.SetupCmd
-  - Stack.Sig
-  - Stack.Sig.GPG
-  - Stack.Sig.Sign
-  - Stack.Snapshot
-  - Stack.Solver
-  - Stack.StaticBytes
+  - Stack.SourceMap
+  - Stack.Storage.Project
+  - Stack.Storage.User
+  - Stack.Storage.Util
   - Stack.Types.Build
-  - Stack.Types.BuildPlan
   - Stack.Types.CompilerBuild
-  - Stack.Types.Urls
   - Stack.Types.Compiler
   - Stack.Types.Config
   - Stack.Types.Config.Build
   - Stack.Types.Docker
-  - Stack.Types.FlagName
   - Stack.Types.GhcPkgId
-  - Stack.Types.Image
   - Stack.Types.NamedComponent
   - Stack.Types.Nix
   - Stack.Types.Package
-  - Stack.Types.PackageDump
-  - Stack.Types.PackageIdentifier
-  - Stack.Types.PackageIndex
   - Stack.Types.PackageName
   - Stack.Types.Resolver
-  - Stack.Types.Runner
-  - Stack.Types.Sig
+  - Stack.Types.SourceMap
   - Stack.Types.TemplateName
   - Stack.Types.Version
   - Stack.Types.VersionIntervals
+  - Stack.Unpack
   - Stack.Upgrade
   - Stack.Upload
-  - Text.PrettyPrint.Leijen.Extended
-  - System.Process.PagerEditor
+  - System.Info.ShortPathName
+  - System.Permissions
+  - System.Process.Pager
   - System.Terminal
-  other-modules:
-  - Hackage.Security.Client.Repository.HttpLib.HttpClient
   when:
   - condition: 'os(windows)'
     then:
       source-dirs: src/windows/
     else:
       source-dirs: src/unix/
+      c-sources: src/unix/cbits/uname.c
 executables:
   stack:
     main: Main.hs
     source-dirs: src/main
-    generated-other-modules: Build_stack
+    generated-other-modules:
+    - Build_stack
+    - Paths_stack
     ghc-options:
     - -threaded
     - -rtsopts
@@ -282,23 +284,12 @@ executables:
     - condition: ! '!(flag(disable-git-info))'
       cpp-options: -DUSE_GIT_INFO
       dependencies:
-      - gitrev
+      - githash
       - optparse-simple
     - condition: flag(hide-dependency-versions)
       cpp-options: -DHIDE_DEP_VERSIONS
     - condition: flag(supported-build)
       cpp-options: -DSUPPORTED_BUILD
-tests:
-  stack-test:
-    main: Test.hs
-    source-dirs: src/test
-    ghc-options:
-    - -threaded
-    dependencies:
-    - QuickCheck
-    - hspec
-    - stack
-    - smallcheck
   stack-integration-test:
     main: IntegrationSpec.hs
     source-dirs:
@@ -309,10 +300,24 @@ tests:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
+    - filepath
     - hspec
+    - optparse-generic
     when:
     - condition: ! '!(flag(integration-tests))'
       buildable: false
+tests:
+  stack-test:
+    main: Spec.hs
+    source-dirs: src/test
+    ghc-options:
+    - -threaded
+    dependencies:
+    - QuickCheck
+    - hspec
+    - raw-strings-qq
+    - stack
+    - smallcheck
 flags:
   static:
     description: Pass -static/-pthread to ghc when linking the stack binary.
@@ -323,8 +328,11 @@ flags:
     manual: true
     default: false
   hide-dependency-versions:
-    description: Hides dependency versions from "stack --version", used only by building
-      with stack.yaml
+    description: "Hides dependency versions from 'stack --version', used only by building
+      Stack and the default 'stack.yaml'.  Note to packagers/distributors:
+      DO NOT OVERRIDE THIS FLAG IF YOU ARE BUILDING 'stack' ANY OTHER WAY
+      (e.g. using cabal or from Hackage), as it makes debugging support
+      requests more difficult."
     manual: true
     default: false
   integration-tests:
@@ -332,6 +340,11 @@ flags:
     manual: true
     default: false
   supported-build:
-    description: If false, causes "stack --version" to issue a warning about the build being unsupported.  True only if building with stack.yaml
+    description: "If false, causes 'stack --version' to issue a warning about
+      the build being unsupported.  Should be True only if building with
+      Stack and the default 'stack.yaml'.  Note to packagers/distributors:
+      DO NOT OVERRIDE THIS FLAG IF YOU ARE BUILDING 'stack' ANY OTHER WAY
+      (e.g. using cabal or from Hackage), as it makes debugging support
+      requests more difficult."
     manual: true
     default: false

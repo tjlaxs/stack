@@ -1,20 +1,25 @@
 import StackTest
 import System.Directory
+import Control.Monad (unless)
 
 main :: IO ()
 main = do
   -- init
+  removeFileIgnore "stack.yaml"
+  removeDirIgnore ".stack-work"
   stack ["init", defaultResolverArg]
 
   -- place to throw some exes
+  removeDirIgnore "binny"
   createDirectory "binny"
 
   -- check assumptions on exec and the build flags and clean
-  stack ["build", "--flag", "*:build-baz"]
+  stack ["build", "--flag", "copy-compiler-tool-test:build-baz"]
   stack ["exec", "--", "baz-exe" ++ exeExt]
   stackErr ["exec", "--", "bar-exe" ++ exeExt]
-  stack ["clean", "--full"]
-  stackErr ["exec", "--", "baz-exe" ++ exeExt]
+  stackCleanFull
+  -- See #4936 for details regarding the windows condition
+  unless isWindows $ stackErr ["exec", "--", "baz-exe" ++ exeExt]
 
   -- install one exe normally
   stack ["install",
@@ -37,7 +42,7 @@ main = do
 
   -- nuke the built things that go in .stack-work/, so we can test if
   -- the installed ones exist for sure
-  stack ["clean", "--full"]
+  stackCleanFull
 
   -- bar and baz were installed as compiler tools, should work fine
   stack ["exec", "--", "bar-exe" ++ exeExt]

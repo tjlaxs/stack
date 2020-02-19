@@ -18,9 +18,18 @@
 # Make pull requests at:
 # https://github.com/commercialhaskell/stack/blob/master/etc/scripts/get-stack.sh
 #
+# Note that this script will ask for root access using `sudo` in order to use
+# your platform's package manager to install dependencies and to install to
+# `/usr/local/bin`.  If you prefer more control, follow the manual
+# installation instructions for your platform at:
+# https://docs.haskellstack.org/en/stable/install_and_upgrade/
+#
 
+STACK_VERSION="2.1.3"
 HOME_LOCAL_BIN="$HOME/.local/bin"
 DEFAULT_DEST="/usr/local/bin/stack"
+# Windows doesn't have a good place for DEST, but all CI systems (Appveyor, Travis, Azure) support /bin
+DEFAULT_DEST_WINDOWS="/bin/stack"
 DEST=""
 QUIET=""
 FORCE=""
@@ -63,8 +72,10 @@ post_install_separator() {
 
 # determines the the CPU's instruction set
 get_isa() {
-  if arch | grep -q arm ; then
+  if arch | grep -q armv7 ; then
     echo arm
+  elif arch | grep -q aarch64 ; then
+    echo aarch64
   else
     echo x86
   fi
@@ -73,6 +84,11 @@ get_isa() {
 # exits with code 0 if arm ISA is detected as described above
 is_arm() {
   test "$(get_isa)" = arm
+}
+
+# exits with code 0 if aarch64 ISA is detected as described above
+is_aarch64() {
+  test "$(get_isa)" = aarch64
 }
 
 
@@ -119,8 +135,20 @@ print_bindist_notice() {
 
 # Adds a 'sudo' prefix if sudo is available to execute the given command
 # If not, the given command is run as is
+# When requesting root permission, always show the command and never re-use cached credentials.
 sudocmd() {
-  $(command -v sudo) "$@"
+  reason="$1"; shift
+  if command -v sudo >/dev/null; then
+    echo
+    echo "About to use 'sudo' to run the following command as root:"
+    echo "    $@"
+    echo "in order to $reason."
+    echo
+    # -k: Disable cached credentials (force prompt for password).
+    sudo -k "$@"
+  else
+    "$@"
+  fi
 }
 
 # Install dependencies for distros that use Apt
@@ -138,17 +166,21 @@ apt_install_dependencies() {
 do_ubuntu_install() {
 
   install_dependencies() {
-    apt_install_dependencies g++ gcc libc6-dev libffi-dev libgmp-dev make xz-utils zlib1g-dev git gnupg
+    apt_install_dependencies g++ gcc libc6-dev libffi-dev libgmp-dev make xz-utils zlib1g-dev git gnupg netbase
   }
 
   if is_arm ; then
     install_dependencies
     print_bindist_notice
     install_arm_binary
+  elif is_aarch64 ; then
+    install_dependencies
+    print_bindist_notice
+    install_aarch64_binary
   elif is_64_bit ; then
     install_dependencies
     print_bindist_notice
-    install_64bit_static_binary
+    install_64bit_standard_binary
   else
     install_dependencies
     print_bindist_notice
@@ -164,17 +196,21 @@ do_ubuntu_install() {
 do_debian_install() {
 
   install_dependencies() {
-    apt_install_dependencies g++ gcc libc6-dev libffi-dev libgmp-dev make xz-utils zlib1g-dev git gnupg
+    apt_install_dependencies g++ gcc libc6-dev libffi-dev libgmp-dev make xz-utils zlib1g-dev git gnupg netbase
   }
 
   if is_arm ; then
     install_dependencies
     print_bindist_notice
     install_arm_binary
+  elif is_aarch64 ; then
+    install_dependencies
+    print_bindist_notice
+    install_aarch64_binary
   elif is_64_bit ; then
     install_dependencies
     print_bindist_notice
-    install_64bit_static_binary
+    install_64bit_standard_binary
   else
     install_dependencies
     print_bindist_notice
@@ -194,7 +230,7 @@ do_fedora_install() {
   if is_64_bit ; then
     install_dependencies "$1"
     print_bindist_notice
-    install_64bit_static_binary
+    install_64bit_standard_binary
   else
     install_dependencies "$1"
     print_bindist_notice
@@ -214,20 +250,38 @@ do_centos_install() {
   if is_64_bit ; then
     install_dependencies
     print_bindist_notice
-    install_64bit_static_binary
+    install_64bit_standard_binary
   else
-    install_dependencies
     case "$1" in
-      "6")
-        print_bindist_notice "libgmp4"
-        install_32bit_gmp4_linked_binary
+      "6"*)
+        die "Sorry, there is currently no Linux 32-bit gmp4 binary available."
         ;;
       *)
+        install_dependencies
         print_bindist_notice
         install_32bit_standard_binary
         ;;
     esac
   fi
+}
+
+# Attempts to install on Windows, designed for CI scripts (tested on Appveyor, Travis, Azure)
+do_windows_install() {
+  info "Using Windows install.."
+  info ""
+  make_temp_dir
+  dl_to_file "http://www.stackage.org/stack/windows-x86_64" "$STACK_TEMP_DIR/stack.zip"
+  if [ "$(basename $DEST)" != "stack" ]; then
+    # should never happen, the -d flag appends stack itself
+    die "Currently the destination must always end with 'stack' on Windows, got: $DEST"
+  fi
+  if ! 7z x $STACK_TEMP_DIR/stack.zip stack.exe "-o$(dirname $DEST)"; then
+    die "Extract zip file failed, you probably don't have 7z installed"
+  fi
+  post_install_separator
+  info "Stack has been installed to: $DEST"
+  info ""
+  check_dest_on_path
 }
 
 # Attempts to install on macOS.
@@ -237,8 +291,9 @@ do_osx_install() {
   info "Using generic bindist..."
   info ""
   install_64bit_osx_binary
-  info "NOTE: You may need to run 'xcode-select --install' to set"
-  info "      up the Xcode command-line tools, which Stack uses."
+  info "NOTE: You may need to run 'xcode-select --install' and/or"
+  info "      'open /Library/Developer/CommandLineTools/Packages/macOS_SDK_headers_for_macOS_10.14.pkg'"
+  info "      to set up the Xcode command-line tools, which Stack uses."
   info ""
 }
 
@@ -263,7 +318,8 @@ do_alpine_install() {
   }
   install_dependencies
   if is_64_bit ; then
-    install_64bit_static_binary
+    print_bindist_notice
+    install_64bit_standard_binary
   else
     die "Sorry, there is currently no 32-bit Alpine Linux binary available."
   fi
@@ -277,11 +333,13 @@ do_sloppy_install() {
   info ""
 
   if is_arm ; then
-      install_arm_binary
+    install_arm_binary
+  elif is_aarch64 ; then
+    install_aarch64_binary
   elif is_64_bit ; then
-      install_64bit_static_binary
+    install_64bit_standard_binary
   else
-      install_32bit_standard_binary
+    install_32bit_standard_binary
   fi
   info "Since this installer doesn't support your Linux distribution,"
   info "there is no guarantee that 'stack' will work at all!  You may"
@@ -387,10 +445,10 @@ GETDISTRO
   fi
 
   case "$DISTRO" in
-    ubuntu|linuxmint|elementary)
+    ubuntu|linuxmint|elementary|neon)
       do_ubuntu_install "$VERSION"
       ;;
-    debian|kali|raspbian)
+    debian|kali|raspbian|mx)
       do_debian_install "$VERSION"
       ;;
     fedora)
@@ -407,17 +465,29 @@ GETDISTRO
   esac
 }
 
+set_default_dest() {
+  [ "$DEST" != "" ] || DEST="$DEFAULT_DEST"
+}
+
 # Determine operating system and attempt to install.
 do_os() {
   case "$(uname)" in
     "Linux")
+      set_default_dest
       do_distro
       ;;
     "Darwin")
+      set_default_dest
       do_osx_install
       ;;
     "FreeBSD")
+      set_default_dest
       do_freebsd_install
+      ;;
+    MINGW64_NT-*|MSYS_NT-*)
+      DEFAULT_DEST="$DEFAULT_DEST_WINDOWS"
+      set_default_dest
+      do_windows_install
       ;;
     *)
       die "Sorry, this installer does not support your operating system: $(uname).
@@ -454,7 +524,7 @@ check_dl_tools() {
 
 # Download a Stack bindst and install it in /usr/local/bin/stack.
 install_from_bindist() {
-    IFB_URL="https://www.stackage.org/stack/$1"
+    IFB_URL="https://github.com/commercialhaskell/stack/releases/download/v${STACK_VERSION}/stack-${STACK_VERSION}-$1"
     check_dl_tools
     make_temp_dir
 
@@ -470,7 +540,7 @@ install_from_bindist() {
         info "$destdir directory does not exist; creating it..."
         # First try to create directory as current user, then try with sudo if it fails.
         if ! mkdir -p "$destdir" 2>/dev/null; then
-            if ! sudocmd mkdir -p "$destdir"; then
+            if ! sudocmd "create the destination directory" mkdir -p "$destdir"; then
                 die "Could not create directory: $DEST"
             fi
         fi
@@ -478,7 +548,7 @@ install_from_bindist() {
     # First attempt to install 'stack' as current user, then try with sudo if it fails
     info "Installing Stack to: $DEST..."
     if ! install -c -m 0755 "$STACK_TEMP_EXE" "$destdir" 2>/dev/null; then
-      if ! sudocmd install -c -o 0 -g 0 -m 0755 "$STACK_TEMP_EXE" "$destdir"; then
+      if ! sudocmd "copy 'stack' to the destination directory" install -c -o 0 -g 0 -m 0755 "$STACK_TEMP_EXE" "$destdir"; then
         die "Install to $DEST failed"
       fi
     fi
@@ -491,27 +561,35 @@ install_from_bindist() {
 }
 
 install_arm_binary() {
-  install_from_bindist "linux-arm"
+  install_from_bindist "linux-arm.tar.gz"
 }
 
 install_32bit_standard_binary() {
-  install_from_bindist "linux-i386"
+  install_from_bindist "linux-i386.tar.gz"
 }
 
-install_64bit_static_binary() {
-  install_from_bindist "linux-x86_64-static"
+install_64bit_standard_binary() {
+  install_from_bindist "linux-x86_64-static.tar.gz"
 }
 
-install_32bit_gmp4_linked_binary() {
-  install_from_bindist "linux-i386-gmp4"
+install_aarch64_binary() {
+  install_from_bindist "linux-aarch64.tar.gz"
+}
+
+install_64bit_gmp4_linked_binary() {
+  install_from_bindist "linux-x86_64-gmp4.tar.gz"
+}
+
+install_64bit_gmp4_linked_binary() {
+  install_from_bindist "linux-x86_64-gmp4"
 }
 
 install_64bit_osx_binary() {
-  install_from_bindist "osx-x86_64"
+  install_from_bindist "osx-x86_64.tar.gz"
 }
 
 install_64bit_freebsd_binary() {
-  install_from_bindist "freebsd-x86_64"
+  install_from_bindist "freebsd-x86_64.tar.gz"
 }
 
 # Attempt to install packages using whichever of apt-get, dnf, yum, or apk is
@@ -532,42 +610,50 @@ try_install_pkgs() {
 
 # Install packages using apt-get
 apt_get_install_pkgs() {
-  if ! sudocmd apt-get install -y ${QUIET:+-qq} "$@"; then
+  missing=
+  for pkg in $*; do
+    if ! dpkg -s $pkg 2>/dev/null |grep '^Status:.*installed' >/dev/null; then
+      missing="$missing $pkg"
+    fi
+  done
+  if [ "$missing" = "" ]; then
+    info "Already installed!"
+  elif ! sudocmd "install required system dependencies" apt-get install -y ${QUIET:+-qq}$missing; then
     die "Installing apt packages failed.  Please run 'apt-get update' and try again."
   fi
 }
 
 # Install packages using dnf
 dnf_install_pkgs() {
-  if ! sudocmd dnf install -y ${QUIET:+-q} "$@"; then
+  if ! sudocmd "install required system dependencies" dnf install -y ${QUIET:+-q} "$@"; then
     die "Installing dnf packages failed.  Please run 'dnf check-update' and try again."
   fi
 }
 
 # Install packages using yum
 yum_install_pkgs() {
-  if ! sudocmd yum install -y ${QUIET:+-q} "$@"; then
+  if ! sudocmd "install required system dependencies" yum install -y ${QUIET:+-q} "$@"; then
     die "Installing yum packages failed.  Please run 'yum check-update' and try again."
   fi
 }
 
 # Install packages using apk
 apk_install_pkgs() {
-  if ! sudocmd apk add --update ${QUIET:+-q} "$@"; then
+  if ! sudocmd "install required system dependencies" apk add --update ${QUIET:+-q} "$@"; then
     die "Installing apk packages failed.  Please run 'apk update' and try again."
   fi
 }
 
 # Install packages using pkg
 pkg_install_pkgs() {
-    if ! sudocmd pkg install -y "$@"; then
+    if ! sudocmd "install required system dependencies" pkg install -y "$@"; then
         die "Installing pkg packages failed.  Please run 'pkg update' and try again."
     fi
 }
 
 # Get installed Stack version, if any
-stack_version() {
-  stack --version | grep -o 'Version \([[:digit:]]\|\.\)\+'
+installed_stack_version() {
+  stack --version | grep -o 'Version \([[:digit:]]\|\.\)\+' | tr A-Z a-z
 }
 
 # Get installed Stack's path
@@ -679,14 +765,16 @@ check_stack_installed() {
         get="wget -qO-"
       fi
       [ "$DEST" != "" ] && location=$(realpath "$DEST") || location=$(stack_location)
-      die "Stack $(stack_version) already appears to be installed at:
+      die "Stack $(installed_stack_version) already appears to be installed at:
   $location
+
 Use 'stack upgrade' or your OS's package manager to upgrade,
 or pass '-f' to this script to over-write the existing binary, e.g.:
-  $get https://get.haskellstack.org/ | sh -s - -f"
+  $get https://get.haskellstack.org/ | sh -s - -f
+
+To install to a different location, pass '-d DESTDIR', e.g.:
+  $get https://get.haskellstack.org/ | sh -s - -d /opt/stack-$STACK_VERSION/bin"
     fi
-  else
-    [ "$DEST" != "" ] || DEST="$DEFAULT_DEST"
   fi
 }
 

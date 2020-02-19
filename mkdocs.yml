@@ -1,8 +1,9 @@
 site_name: The Haskell Tool Stack
 site_description: The Haskell Tool Stack
 site_author: Stack contributors
-repo_url: https://github.com/commercialhaskell/stack/tree/master/doc
-copyright: Copyright (c) 2015-2018, Stack contributors
+repo_url: https://github.com/commercialhaskell/stack/
+edit_uri: edit/stable/doc/
+copyright: Copyright (c) 2015-2019, Stack contributors
 docs_dir: doc
 site_dir: _site
 theme: readthedocs
@@ -18,24 +19,30 @@ pages:
   - Install/upgrade: install_and_upgrade.md
   - User guide: GUIDE.md
   - FAQ: faq.md
-  - Configuration (Project and Global): yaml_configuration.md
+  - Configuration (project and global): yaml_configuration.md
   - stack.yaml vs cabal package files: stack_yaml_vs_cabal_package_file.md
   - Build command: build_command.md
   - Dependency visualization: dependency_visualization.md
   - Docker integration: docker_integration.md
-  - GHCJS: ghcjs.md
   - Nix integration: nix_integration.md
   - Non-standard project initialization: nonstandard_project_init.md
-  - Shell Auto-completion: shell_autocompletion.md
+  - Shell auto-completion: shell_autocompletion.md
   - Travis CI: travis_ci.md
+  - Azure CI: azure_ci.md
   - Custom snapshots: custom_snapshot.md
-  - Code Coverage: coverage.md
+  - Code coverage: coverage.md
   - GHCi: ghci.md
+  - Pantry: pantry.md
+  - Lock files: lock_files.md
 - Advanced documentation:
-  - Architecture: architecture.md
+  - Build overview: build_overview.md
 - Project documentation:
-  - Contributors Guide: CONTRIBUTING.md
-  - Maintainer guide: MAINTAINER_GUIDE.md
+  - Contributors guide: CONTRIBUTING.md
+  - Maintainer guide:
+    - Releases: maintainers/releases.md
+    - Maintainer team process: maintainers/team_process.md
+    - Add GHC version: maintainers/ghc.md
+    - Upgrading msys: maintainers/msys.md
   - Signing key: SIGNING_KEY.md
 
 markdown_extensions:

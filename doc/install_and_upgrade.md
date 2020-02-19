@@ -1,8 +1,8 @@
-<div class="hidden-warning"><a href="https://docs.haskellstack.org/"><img src="https://rawgit.com/commercialhaskell/stack/master/doc/img/hidden-warning.svg"></a></div>
+<div class="hidden-warning"><a href="https://docs.haskellstack.org/"><img src="https://cdn.jsdelivr.net/gh/commercialhaskell/stack/doc/img/hidden-warning.svg"></a></div>
 
 # Install/upgrade
 
-For common Un*x operating systems (including macOS), all you need to do is run:
+For common Un\*x operating systems (including macOS), all you need to do is run:
 
     curl -sSL https://get.haskellstack.org/ | sh
 
@@ -10,9 +10,12 @@ or:
 
     wget -qO- https://get.haskellstack.org/ | sh
 
-Distribution packages are available for [Ubuntu](#ubuntu), [Debian](#debian),
-[Fedora](#fedora),
-[Arch Linux](#arch-linux) and [FreeBSD](#freebsd).
+
+Note that this script will ask for root access using `sudo` in order
+to use your platform's package manager to install dependencies and to
+install to `/usr/local/bin`.  If you prefer more control, follow the
+manual installation instructions for your platform below.
+
 Binaries for other operating systems are listed below, and available on
 [the GitHub release page](https://github.com/fpco/stack/releases). For the
 future, we are open to supporting more OSes (to request one, please
@@ -21,16 +24,15 @@ future, we are open to supporting more OSes (to request one, please
 Binary packages are signed with this [signing key](SIGNING_KEY.md).
 
 If you are writing a script that needs to download the latest binary, you can
-find links that always point to the latest bindists
-[here](https://www.stackage.org/stack).
+use URLs like `https://get.haskellstack.org/stable/<PLATFORM>.<EXTENSION>` (e.g. https://get.haskellstack.org/stable/linux-x86_64-static.tar.gz) that always point to the latest stable release.
 
 ## Windows
 
 We recommend installing to the default location with these installers, as that
 will make `stack install` and `stack upgrade` work correctly out of the box.
 
-  * [Windows 64-bit Installer](https://www.stackage.org/stack/windows-x86_64-installer)
-  * [Windows 32-bit Installer](https://www.stackage.org/stack/windows-i386-installer)
+  * [Windows 64-bit Installer](https://get.haskellstack.org/stable/windows-x86_64-installer.exe)
+  * [Windows 32-bit Installer](https://get.haskellstack.org/stable/windows-i386-installer.exe)
 
 If in doubt: you should prefer the 64-bit installer.
 
@@ -42,8 +44,8 @@ starting" warning when you try to run the installer. If so, click on
 
 * Download the latest release:
 
-    * [Windows 64-bit](https://www.stackage.org/stack/windows-x86_64)
-    * [Windows 32-bit](https://www.stackage.org/stack/windows-i386)
+    * [Windows 64-bit](https://get.haskellstack.org/stable/windows-x86_64.zip)
+    * [Windows 32-bit](https://get.haskellstack.org/stable/windows-i386.zip)
 
 * Unpack the archive and place `stack.exe` somewhere on your `%PATH%` (see
   [Path section below](#path)) and you can then run `stack` on the command line.
@@ -52,9 +54,7 @@ starting" warning when you try to run the installer. If so, click on
 
 ## macOS
 
-We generally test on the current version of macOS, but Stack is known to work
-on Sierra, El Capitan, Yosemite and Mavericks as well, and may also work on older
-versions (YMMV).
+We generally test on the current version of macOS and do our best to keep it compatible with the three most recent major versions.  Stack may also work on older versions (YMMV).
 
 ### Installer script
 
@@ -65,7 +65,7 @@ Run:
 ### Manual download
 
 * Download the latest release:
-    * [macOS 64-bit](https://www.stackage.org/stack/osx-x86_64)
+    * [macOS 64-bit](https://get.haskellstack.org/stable/osx-x86_64.tar.gz)
 * Extract the archive and place `stack` somewhere on your `$PATH` (see
   [Path section below](#path))
 * Now you can run `stack` from the terminal.
@@ -89,6 +89,11 @@ After installation, running `stack setup` might fail with `configure: error: can
 
     xcode-select --install
 
+Starting with macOs 10.14 (Mojave) running `xcode-select --install` [might not be enough](https://forums.developer.apple.com/thread/104296). You will need to install additional headers by running:
+
+    cd /Library/Developer/CommandLineTools/Packages/
+    open macOS_SDK_headers_for_macOS_10.14.pkg
+
 If you are on OS X 10.11 ("El Capitan") and encounter either of these
 problems, see the linked FAQ entries:
 
@@ -105,8 +110,8 @@ Use the [generic Linux option](#linux).
 There is also a [Ubuntu
 package](http://packages.ubuntu.com/search?keywords=haskell-stack&searchon=names&suite=all&section=all)
 for Ubuntu 16.10 and up, but the distribution's Stack version lags behind, so we
-recommend running `stack upgrade --binary` after installing it. For older stack
-versions which do not support `--binary`, just `stack upgrade` is fine too. The
+recommend running `stack upgrade --binary-only` after installing it. For older stack
+versions which do not support `--binary-only`, just `stack upgrade` may work too. The
 version in Ubuntu 16.04 is too old to upgrade successfully, and so in that case
 stack should be installed from a [release
 tarball](https://github.com/commercialhaskell/stack/releases).
@@ -118,8 +123,8 @@ Use the [generic Linux option](#linux).
 There is also a [Debian
 package](https://packages.debian.org/search?keywords=haskell-stack&searchon=names&suite=all&section=all)
 for Stretch and up, but the distribution's Stack version lags behind, so running
-`stack upgrade --binary` is recommended after installing it. For older stack
-versions which do not support `--binary`, just `stack upgrade` is fine too.
+`stack upgrade --binary-only` is recommended after installing it. For older stack
+versions which do not support `--binary-only`, just `stack upgrade` may work too.
 
 ## <a name="centos"></a>CentOS / Red Hat / Amazon Linux
 
@@ -233,18 +238,20 @@ or:
 
 * Download the latest release:
 
-    * [Linux 64-bit, static](https://www.stackage.org/stack/linux-x86_64-static)
+    * [Linux 64-bit, static](https://get.haskellstack.org/stable/linux-x86_64-static.tar.gz)
 
-    * [Linux 32-bit, standard](https://www.stackage.org/stack/linux-i386)
+    * [Linux 32-bit, standard](https://get.haskellstack.org/stable/linux-i386.tar.gz)
+      (note: requires libgmp.so.10, and will not work on some older
+      distributions that have libgmp.so.3, such as CentOS 6)
 
-    * [Linux 32-bit, libgmp4](https://www.stackage.org/stack/linux-i386-gmp4)
-      (if you are on an older 32-bit distribution that only includes libgmp4
-      (libgmp.so.3), such as CentOS/RHEL/Amazon Linux 6.)
+    * [Linux ARMv7](https://get.haskellstack.org/stable/linux-arm.tar.gz)
+
+    * [Linux AArch64](https://get.haskellstack.org/stable/linux-aarch64.tar.gz)
 
 * Extract the archive and place `stack` somewhere on your `$PATH` (see [Path section below](#path))
 
 * Ensure you have required system dependencies installed.  These include GCC, GNU make, xz, perl, libgmp, libffi, and zlib.  We also recommend Git and GPG.  To install these using your package manager:
-    * Debian / Ubuntu: `sudo apt-get install g++ gcc libc6-dev libffi-dev libgmp-dev make xz-utils zlib1g-dev git gnupg`
+    * Debian / Ubuntu: `sudo apt-get install g++ gcc libc6-dev libffi-dev libgmp-dev make xz-utils zlib1g-dev git gnupg netbase`
     * Fedora / CentOS: `sudo dnf install perl make automake gcc gmp-devel libffi zlib xz tar git gnupg` (use `yum` instead of `dnf` on CentOS and Fedora <= 21)
         * Fedora 24: In order to use `stack setup` on a 32-bit system, you may
           need to run `sudo dnf install ncurses-compat-libs`. If this package is
@@ -279,7 +286,7 @@ Run:
 
 * Download the latest release:
 
-    * [FreeBSD 64-bit](https://www.stackage.org/stack/freebsd-x86_64)
+    * [FreeBSD 64-bit](https://get.haskellstack.org/stable/freebsd-x86_64.tar.gz)
 
 * Extract the archive and place `stack` somewhere on your `$PATH` (see [Path section below](#path))
 
@@ -287,9 +294,9 @@ Run:
 
 ## Path
 
-You can install stack by copying it anywhere on your PATH environment variable. We recommend installing in the same directory where stack itself will install executables (that way stack is able to upgrade itself!). On Windows, that directory is `%APPDATA%\local\bin`, e.g. "c:\Users\Michael\AppData\Roaming\local\bin". For other systems, use `$HOME/.local/bin`.
+You can install stack by copying it anywhere on your PATH environment variable. A good place to install is the same directory where stack itself will install executables. On Windows, that directory is `%APPDATA%\local\bin`, e.g. `c:\Users\Michael\AppData\Roaming\local\bin`. For other systems, it's `$HOME/.local/bin`.
 
-If you don't have that directory in your PATH, you may need to update your PATH (such as by editing .bashrc).
+If you don't have that directory in your PATH, you may need to update your PATH (such as by editing `~/.bashrc`).
 
 If you're curious about the choice of these paths, see [issue #153](https://github.com/commercialhaskell/stack/issues/153)
 
@@ -301,6 +308,37 @@ To get tab-completion of commands on bash, just run the following (or add it to
     eval "$(stack --bash-completion-script stack)"
 
 For more information and other shells, see [the shell auto-completion page](shell_autocompletion.md)
+
+## China-based users
+
+If you're attempting to install stack from within China:
+
+* As of 2018-10-24, the download link has limited connectivity from within mainland China. If this is the case, please proceed by manually downloading (ideally via a VPN) and installing stack per the instructions found on this page pertinent to your OS.
+
+* After install, your ~/.stack/config.yaml will need to be configured before stack can download large files consistently from within China (without reliance on a VPN). Please add the following to the bottom of the ~/.stack/config.yaml file (for Windows: use the %STACK_ROOT%\config.yaml):
+
+```
+###ADD THIS IF YOU LIVE IN CHINA
+setup-info-locations: 
+- "http://mirrors.tuna.tsinghua.edu.cn/stackage/stack-setup.yaml"
+urls:
+  latest-snapshot: http://mirrors.tuna.tsinghua.edu.cn/stackage/snapshots.json
+package-indices:
+ - name: Tsinghua
+   download-prefix: http://mirrors.tuna.tsinghua.edu.cn/hackage/package/
+   http: http://mirrors.tuna.tsinghua.edu.cn/hackage/00-index.tar.gz
+```
+
+## Using an http proxy
+
+To use `stack` behind a http proxy with ip address *IP* and port *PORT*, first set up an environment variable `http_proxy` and then run the stack command. _e.g._
+
+```
+$ export http_proxy=IP:PORT
+$ stack install
+```
+
+Note that on most operating systems, it is not mandatory for programs to follow the "system-wide" http proxy. Some programs, such as browsers, do honor this "system-wide" http proxy setting, while other programs, including bash, do not. That means configuring "http proxy setting" in your Control Panel (Windows) or System Preferences (Mac) would not result in `stack` traffic going through the proxy. 
 
 ## Upgrade
 

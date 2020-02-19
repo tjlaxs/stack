@@ -1,4 +1,4 @@
-<div class="hidden-warning"><a href="https://docs.haskellstack.org/"><img src="https://rawgit.com/commercialhaskell/stack/master/doc/img/hidden-warning.svg"></a></div>
+<div class="hidden-warning"><a href="https://docs.haskellstack.org/"><img src="https://cdn.jsdelivr.net/gh/commercialhaskell/stack/doc/img/hidden-warning.svg"></a></div>
 
 # Non-standard project initialization
 
@@ -79,17 +79,11 @@ default so as to avoid unnecessary recompilation time.
   - https://github.com/commercialhaskell/stack/issues/464
 
 ## Using git Repositories
-stack has support for packages that reside in remote git locations.
 
-Example:
-
-```
-packages:
-- '.'
-- location:
-    git: https://github.com/kolmodin/binary
-    commit: 8debedd3fcb6525ac0d7de2dd49217dce2abc0d9
-```
+Stack has support for packages that reside in remote git locations. Please see
+the [YAML configuration
+documentation](yaml_configuration.md#git-and-mercurial-repos) for more
+information.
 
 ### Issues Referenced
   - https://github.com/commercialhaskell/stack/issues/254
@@ -115,14 +109,15 @@ For further information see [YAML configuration](yaml_configuration.md)
   - https://github.com/commercialhaskell/stack/issues/565
 
 ## Custom Snapshots
-Currently WIP?
+See [Custom Snapshots](custom_snapshot.md).
+
 ### Issues Referenced
   - https://github.com/commercialhaskell/stack/issues/111
   - https://github.com/commercialhaskell/stack/issues/253
   - https://github.com/commercialhaskell/stack/issues/137
 
 ## Intra-package Targets
-stack supports intra-package targets, similar to `cabal build COMPONENTS` for
+Stack supports intra-package targets, similar to `cabal build COMPONENTS` for
 situations when you don't want to build every target inside your package.
 
 Example:

@@ -1,12 +1,10 @@
-resolver: lts-11.5
+resolver: lts-11.22
 packages:
 - package-with-th
 - package-with-working-th
 - package-with-failing-test
-- location: subdirs
-  subdirs:
-  - dependent-on-failing-packages
-  - failing-in-subdir
+- subdirs/dependent-on-failing-packages
+- subdirs/failing-in-subdir
 extra-deps: []
 flags: {}
 extra-package-dbs: []

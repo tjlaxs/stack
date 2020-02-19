@@ -1,9 +1,11 @@
-<div class="hidden-warning"><a href="https://docs.haskellstack.org/"><img src="https://rawgit.com/commercialhaskell/stack/master/doc/img/hidden-warning.svg"></a></div>
+<div class="hidden-warning"><a href="https://docs.haskellstack.org/"><img src="https://cdn.jsdelivr.net/gh/commercialhaskell/stack/doc/img/hidden-warning.svg"></a></div>
 
 # Dependency visualization
 
 You can use stack to visualize the dependencies between your packages and
 optionally also external dependencies.
+
+First, you need [Graphviz](https://www.graphviz.org/). You can [get it here](https://www.graphviz.org/download/).
 
 As an example, let's look at `wreq`:
 

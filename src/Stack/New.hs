@@ -4,7 +4,6 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
 
 -- | Create new a new project directory populated with a basic working
 -- project.
@@ -12,44 +11,37 @@
 module Stack.New
     ( new
     , NewOpts(..)
-    , defaultTemplateName
-    , templateNameArgument
-    , getTemplates
     , TemplateName
-    , listTemplates)
-    where
+    , templatesHelp
+    ) where
 
 import           Stack.Prelude
 import           Control.Monad.Trans.Writer.Strict
-import           Data.Aeson
-import           Data.Aeson.Types
-import qualified Data.ByteString as SB
+import           Control.Monad (void)
+import           Data.ByteString.Builder (lazyByteString)
 import qualified Data.ByteString.Lazy as LB
 import           Data.Conduit
-import qualified Data.HashMap.Strict as HM
 import           Data.List
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified Data.Text as T
+import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Encoding as T
-import qualified Data.Text.Encoding.Error as T (lenientDecode)
-import qualified Data.Text.IO as T
+import qualified Data.Text.Lazy.Encoding as TLE
 import           Data.Time.Calendar
 import           Data.Time.Clock
-import qualified Data.Yaml as Yaml
-import           Network.HTTP.Download
-import           Network.HTTP.Simple (Request, HttpException, getResponseStatusCode, getResponseBody)
+import           Network.HTTP.StackClient (DownloadException (..), Request, HttpException,
+                                           getResponseStatusCode, getResponseBody, httpLbs,
+                                           parseRequest, parseUrlThrow, redownload, setGithubHeaders)
 import           Path
 import           Path.IO
 import           Stack.Constants
 import           Stack.Constants.Config
 import           Stack.Types.Config
-import           Stack.Types.PackageName
 import           Stack.Types.TemplateName
 import           RIO.Process
 import qualified Text.Mustache as Mustache
 import qualified Text.Mustache.Render as Mustache
-import           Text.Printf
 import           Text.ProjectTemplate
 
 --------------------------------------------------------------------------------
@@ -108,7 +100,7 @@ new opts forceOverwrite = do
         logInfo
             (loading <> " template \"" <> display (templateName template) <>
              "\" to create project \"" <>
-             display (packageNameText project) <>
+             fromString (packageNameString project) <>
              "\" in " <>
              if bare then "the current directory"
                      else fromString (toFilePath (dirname absDir)) <>
@@ -126,21 +118,22 @@ loadTemplate name logIt = do
     templateDir <- view $ configL.to templatesDir
     case templatePath name of
         AbsPath absFile -> logIt LocalTemp >> loadLocalFile absFile
-        UrlPath s -> do
-            req <- parseRequest s
-            let rel = fromMaybe backupUrlRelPath (parseRelFile s)
-            downloadTemplate req (templateDir </> rel)
-        RelPath relFile ->
+        UrlPath s -> downloadFromUrl s templateDir
+        RelPath rawParam relFile ->
             catch
                 (do f <- loadLocalFile relFile
                     logIt LocalTemp
                     return f)
                 (\(e :: NewException) ->
-                      case relRequest relFile of
+                      case relRequest rawParam of
                         Just req -> downloadTemplate req
                                                      (templateDir </> relFile)
                         Nothing -> throwM e
                 )
+        RepoPath rtp -> do
+            let url = urlFromRepoTemplatePath rtp
+            downloadFromUrl (T.unpack url) templateDir
+                            
   where
     loadLocalFile :: Path b File -> RIO env Text
     loadLocalFile path = do
@@ -148,19 +141,43 @@ loadTemplate name logIt = do
                                                 <> "\"")
         exists <- doesFileExist path
         if exists
-            then liftIO (fmap (T.decodeUtf8With T.lenientDecode) (SB.readFile (toFilePath path)))
+            then readFileUtf8 (toFilePath path)
             else throwM (FailedToLoadTemplate name (toFilePath path))
-    relRequest :: MonadThrow n => Path Rel File -> n Request
-    relRequest rel = parseRequest (defaultTemplateUrl <> "/" <> toFilePath rel)
+    relRequest :: String -> Maybe Request
+    relRequest req = do
+        rtp <- parseRepoPathWithService defaultRepoService (T.pack req)
+        let url = urlFromRepoTemplatePath rtp
+        parseRequest (T.unpack url)
+    downloadFromUrl :: String -> Path Abs Dir -> RIO env Text
+    downloadFromUrl s templateDir = do
+        req <- parseRequest s
+        let rel = fromMaybe backupUrlRelPath (parseRelFile s)
+        downloadTemplate req (templateDir </> rel)
     downloadTemplate :: Request -> Path Abs File -> RIO env Text
     downloadTemplate req path = do
         logIt RemoteTemp
-        _ <-
-            catch
-                (redownload req path)
-                (throwM . FailedToDownloadTemplate name)
+        catch
+          (void $ redownload req path)
+          (useCachedVersionOrThrow path)
+
         loadLocalFile path
-    backupUrlRelPath = $(mkRelFile "downloaded.template.file.hsfiles")
+    useCachedVersionOrThrow :: Path Abs File -> DownloadException -> RIO env ()
+    useCachedVersionOrThrow path exception = do
+      exists <- doesFileExist path
+
+      if exists
+        then do logWarn "Tried to download the template but an error was found."
+                logWarn "Using cached local version. It may not be the most recent version though."
+        else throwM (FailedToDownloadTemplate name exception)
+
+-- | Construct a URL for downloading from a repo.
+urlFromRepoTemplatePath :: RepoTemplatePath -> Text
+urlFromRepoTemplatePath (RepoTemplatePath Github user name) =
+    T.concat ["https://raw.githubusercontent.com", "/", user, "/stack-templates/master/", name]
+urlFromRepoTemplatePath (RepoTemplatePath Gitlab user name) =
+    T.concat ["https://gitlab.com",                "/", user, "/stack-templates/raw/master/", name]
+urlFromRepoTemplatePath (RepoTemplatePath Bitbucket user name) =
+    T.concat ["https://bitbucket.org",             "/", user, "/stack-templates/raw/master/", name]
 
 -- | Apply and unpack a template into a directory.
 applyTemplate
@@ -179,24 +196,16 @@ applyTemplate project template nonceParams dir templateText = do
       return $ T.pack . show $ year
     let context = M.unions [nonceParams, nameParams, configParams, yearParam]
           where
-            nameAsVarId = T.replace "-" "_" $ packageNameText project
-            nameAsModule = T.filter (/= '-') $ T.toTitle $ packageNameText project
-            nameParams = M.fromList [ ("name", packageNameText project)
+            nameAsVarId = T.replace "-" "_" $ T.pack $ packageNameString project
+            nameAsModule = T.filter (/= '-') $ T.toTitle $ T.pack $ packageNameString project
+            nameParams = M.fromList [ ("name", T.pack $ packageNameString project)
                                     , ("name-as-varid", nameAsVarId)
                                     , ("name-as-module", nameAsModule) ]
             configParams = configTemplateParams config
             yearParam = M.singleton "year" currentYear
-        etemplateCompiled = Mustache.compileTemplate (T.unpack (templateName template)) templateText
-    templateCompiled <- case etemplateCompiled of
-      Left e -> throwM $ InvalidTemplate template (show e)
-      Right t -> return t
-    let (substitutionErrors, applied) = Mustache.checkedSubstitute templateCompiled context
-        missingKeys = S.fromList $ concatMap onlyMissingKeys substitutionErrors
-    unless (S.null missingKeys)
-         (logInfo ("\n" <> displayShow (MissingParameters project template missingKeys (configUserConfigPath config)) <> "\n"))
     files :: Map FilePath LB.ByteString <-
         catch (execWriterT $ runConduit $
-               yield (T.encodeUtf8 applied) .|
+               yield (T.encodeUtf8 templateText) .|
                unpackTemplate receiveMem id
               )
               (\(e :: ProjectTemplateException) ->
@@ -208,12 +217,40 @@ applyTemplate project template nonceParams dir templateText = do
     unless (any isPkgSpec . M.keys $ files) $
          throwM (InvalidTemplate template "Template does not contain a .cabal \
                                           \or package.yaml file")
+
+    -- Apply Mustache templating to a single file within the project
+    -- template.
+    let applyMustache bytes
+          -- Workaround for performance problems with mustache and
+          -- large files, applies to Yesod templates with large
+          -- bootstrap CSS files. See
+          -- https://github.com/commercialhaskell/stack/issues/4133.
+          | LB.length bytes < 50000
+          , Right text <- TLE.decodeUtf8' bytes = do
+              let etemplateCompiled = Mustache.compileTemplate (T.unpack (templateName template)) $ TL.toStrict text
+              templateCompiled <- case etemplateCompiled of
+                Left e -> throwM $ InvalidTemplate template (show e)
+                Right t -> return t
+              let (substitutionErrors, applied) = Mustache.checkedSubstitute templateCompiled context
+                  missingKeys = S.fromList $ concatMap onlyMissingKeys substitutionErrors
+              unless (S.null missingKeys)
+                (logInfo ("\n" <> displayShow (MissingParameters project template missingKeys (configUserConfigPath config)) <> "\n"))
+              pure $ LB.fromStrict $ encodeUtf8 applied
+
+          -- Too large or too binary
+          | otherwise = pure bytes
+
     liftM
         M.fromList
         (mapM
-             (\(fp,bytes) ->
-                   do path <- parseRelFile fp
-                      return (dir </> path, bytes))
+             (\(fpOrig,bytes) ->
+                   do -- Apply the mustache template to the filenames
+                      -- as well, so that we can have file names
+                      -- depend on the project name.
+                      fp <- applyMustache $ TLE.encodeUtf8 $ TL.pack fpOrig
+                      path <- parseRelFile $ TL.unpack $ TLE.decodeUtf8 fp
+                      bytes' <- applyMustache bytes
+                      return (dir </> path, bytes'))
              (M.toList files))
   where
     onlyMissingKeys (Mustache.VariableNotFound ks) = map T.unpack ks
@@ -230,11 +267,12 @@ writeTemplateFiles
     :: MonadIO m
     => Map (Path Abs File) LB.ByteString -> m ()
 writeTemplateFiles files =
+    liftIO $
     forM_
         (M.toList files)
         (\(fp,bytes) ->
               do ensureDir (parent fp)
-                 liftIO (LB.writeFile (toFilePath fp) bytes))
+                 writeBinaryFileAtomic fp $ lazyByteString bytes)
 
 -- | Run any initialization functions, such as Git.
 runTemplateInits
@@ -250,93 +288,27 @@ runTemplateInits dir = do
             catchAny (proc "git" ["init"] runProcess_)
                   (\_ -> logInfo "git init failed to run, ignoring ...")
 
--- | Display the set of templates accompanied with description if available.
-listTemplates :: HasLogFunc env => RIO env ()
-listTemplates = do
-    templates <- getTemplates
-    templateInfo <- getTemplateInfo
-    if not . M.null $ templateInfo then do
-      let keySizes  = map (T.length . templateName) $ S.toList templates
-          padWidth  = show $ maximum keySizes
-          outputfmt = "%-" <> padWidth <> "s %s\n"
-          headerfmt = "%-" <> padWidth <> "s   %s\n"
-      liftIO $ printf headerfmt ("Template"::String) ("Description"::String)
-      forM_ (S.toList templates) (\x -> do
-           let name = templateName x
-               desc = fromMaybe "" $ liftM (mappend "- ") (M.lookup name templateInfo >>= description)
-           liftIO $ printf outputfmt (T.unpack name) (T.unpack desc))
-      else mapM_ (liftIO . T.putStrLn . templateName) (S.toList templates)
-
--- | Get the set of templates.
-getTemplates :: HasLogFunc env => RIO env (Set TemplateName)
-getTemplates = do
-    req <- liftM setGithubHeaders (parseUrlThrow defaultTemplatesList)
-    resp <- catch (httpJSON req) (throwM . FailedToDownloadTemplates)
-    case getResponseStatusCode resp of
-        200 -> return $ unTemplateSet $ getResponseBody resp
-        code -> throwM (BadTemplatesResponse code)
-
-getTemplateInfo :: HasLogFunc env => RIO env (Map Text TemplateInfo)
-getTemplateInfo = do
-  req <- liftM setGithubHeaders (parseUrlThrow defaultTemplateInfoUrl)
-  resp <- catch (liftM Right $ httpLbs req) (\(ex :: HttpException) -> return . Left $ "Failed to download template info. The HTTP error was: " <> show ex)
-  case resp >>= is200 of
-    Left err -> do
-      logInfo $ fromString err
-      return M.empty
-    Right resp' ->
-      case Yaml.decodeEither (LB.toStrict $ getResponseBody resp') :: Either String Object of
-        Left err ->
-          throwM $ BadTemplateInfo err
-        Right o ->
-          return (M.mapMaybe (Yaml.parseMaybe Yaml.parseJSON) (M.fromList . HM.toList $ o) :: Map Text TemplateInfo)
-  where
-    is200 resp =
-      case getResponseStatusCode resp of
-        200 -> return resp
-        code -> Left $ "Unexpected status code while retrieving templates info: " <> show code
-
-newtype TemplateSet = TemplateSet { unTemplateSet :: Set TemplateName }
-instance FromJSON TemplateSet where
-  parseJSON = fmap TemplateSet . parseTemplateSet
-
--- | Parser the set of templates from the JSON.
-parseTemplateSet :: Value -> Parser (Set TemplateName)
-parseTemplateSet a = do
-    xs <- parseJSON a
-    fmap S.fromList (mapMaybeM parseTemplate xs)
-  where
-    parseTemplate v = do
-        o <- parseJSON v
-        name <- o .: "name"
-        if ".hsfiles" `isSuffixOf` name
-            then case parseTemplateNameFromString name of
-                     Left{} ->
-                         fail ("Unable to parse template name from " <> name)
-                     Right template -> return (Just template)
-            else return Nothing
+-- | Display help for the templates command.
+templatesHelp :: HasLogFunc env => RIO env ()
+templatesHelp = do
+  let url = defaultTemplatesHelpUrl
+  req <- liftM setGithubHeaders (parseUrlThrow url)
+  resp <- httpLbs req `catch` (throwM . FailedToDownloadTemplatesHelp)
+  case decodeUtf8' $ LB.toStrict $ getResponseBody resp of
+    Left err -> throwM $ BadTemplatesHelpEncoding url err
+    Right txt -> logInfo $ display txt
 
 --------------------------------------------------------------------------------
 -- Defaults
 
--- | The default template name you can use if you don't have one.
-defaultTemplateName :: TemplateName
-defaultTemplateName = $(mkTemplateName "new-template")
+-- | The default service to use to download templates.
+defaultRepoService :: RepoService
+defaultRepoService = Github
 
--- | Default web root URL to download from.
-defaultTemplateUrl :: String
-defaultTemplateUrl =
-    "https://raw.githubusercontent.com/commercialhaskell/stack-templates/master"
-
--- | Default web URL to get a yaml file containing template metadata.
-defaultTemplateInfoUrl :: String
-defaultTemplateInfoUrl =
-    "https://raw.githubusercontent.com/commercialhaskell/stack-templates/master/template-info.yaml"
-
--- | Default web URL to list the repo contents.
-defaultTemplatesList :: String
-defaultTemplatesList =
-    "https://api.github.com/repos/commercialhaskell/stack-templates/contents/"
+-- | Default web URL to get the `stack templates` help output.
+defaultTemplatesHelpUrl :: String
+defaultTemplatesHelpUrl =
+    "https://raw.githubusercontent.com/commercialhaskell/stack-templates/master/STACK_HELP.md"
 
 --------------------------------------------------------------------------------
 -- Exceptions
@@ -347,15 +319,14 @@ data NewException
                            !FilePath
     | FailedToDownloadTemplate !TemplateName
                                !DownloadException
-    | FailedToDownloadTemplates !HttpException
-    | BadTemplatesResponse !Int
     | AlreadyExists !(Path Abs Dir)
     | MissingParameters !PackageName !TemplateName !(Set String) !(Path Abs File)
     | InvalidTemplate !TemplateName !String
     | AttemptedOverwrites [Path Abs File]
-    | FailedToDownloadTemplateInfo !HttpException
-    | BadTemplateInfo !String
-    | BadTemplateInfoResponse !Int
+    | FailedToDownloadTemplatesHelp !HttpException
+    | BadTemplatesHelpEncoding
+        !String -- URL it's downloaded from
+        !UnicodeException
     | Can'tUseWiredInName !PackageName
     deriving (Typeable)
 
@@ -366,20 +337,20 @@ instance Show NewException where
         "Failed to load download template " <> T.unpack (templateName name) <>
         " from " <>
         path
-    show (FailedToDownloadTemplate name (RedownloadFailed _ _ resp)) =
+    show (FailedToDownloadTemplate name (RedownloadInvalidResponse _ _ resp)) =
         case getResponseStatusCode resp of
             404 ->
-                "That template doesn't exist. Run `stack templates' to see a list of available templates."
+                "That template doesn't exist. Run `stack templates' to discover available templates."
             code ->
                 "Failed to download template " <> T.unpack (templateName name) <>
                 ": unknown reason, status code was: " <>
                 show code
+
+    show (FailedToDownloadTemplate name (RedownloadHttpError httpError)) =
+          "There was an unexpected HTTP error while downloading template " <>
+          T.unpack (templateName name) <> ": " <> show httpError
     show (AlreadyExists path) =
         "Directory " <> toFilePath path <> " already exists. Aborting."
-    show (FailedToDownloadTemplates ex) =
-        "Failed to download templates. The HTTP error was: " <> show ex
-    show (BadTemplatesResponse code) =
-        "Unexpected status code while retrieving templates list: " <> show code
     show (MissingParameters name template missingKeys userConfigPath) =
         intercalate
             "\n"
@@ -413,11 +384,9 @@ instance Show NewException where
         "The template would create the following files, but they already exist:\n" <>
         unlines (map (("  " ++) . toFilePath) fps) <>
         "Use --force to ignore this, and overwite these files."
-    show (FailedToDownloadTemplateInfo ex) =
-        "Failed to download templates info. The HTTP error was: " <> show ex
-    show (BadTemplateInfo err) =
-        "Template info couldn't be parsed: " <> err
-    show (BadTemplateInfoResponse code) =
-        "Unexpected status code while retrieving templates info: " <> show code
+    show (FailedToDownloadTemplatesHelp ex) =
+        "Failed to download `stack templates` help. The HTTP error was: " <> show ex
+    show (BadTemplatesHelpEncoding url err) =
+        "UTF-8 decoding error on template info from\n    " <> url <> "\n\n" <> show err
     show (Can'tUseWiredInName name) =
         "The name \"" <> packageNameString name <> "\" is used by GHC wired-in packages, and so shouldn't be used as a package name"

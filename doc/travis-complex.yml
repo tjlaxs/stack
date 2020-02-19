@@ -60,9 +60,12 @@ matrix:
   - env: BUILD=cabal GHCVER=8.2.2 CABALVER=2.0 HAPPYVER=1.19.5 ALEXVER=3.1.7
     compiler: ": #GHC 8.2.2"
     addons: {apt: {packages: [cabal-install-2.0,ghc-8.2.2,happy-1.19.5,alex-3.1.7], sources: [hvr-ghc]}}
-  - env: BUILD=cabal GHCVER=8.4.1 CABALVER=2.0 HAPPYVER=1.19.5 ALEXVER=3.1.7
-    compiler: ": #GHC 8.4.1"
-    addons: {apt: {packages: [cabal-install-2.0,ghc-8.4.1,happy-1.19.5,alex-3.1.7], sources: [hvr-ghc]}}
+  - env: BUILD=cabal GHCVER=8.4.4 CABALVER=2.2 HAPPYVER=1.19.5 ALEXVER=3.1.7
+    compiler: ": #GHC 8.4.4"
+    addons: {apt: {packages: [cabal-install-2.2,ghc-8.4.4,happy-1.19.5,alex-3.1.7], sources: [hvr-ghc]}}
+  - env: BUILD=cabal GHCVER=8.6.5 CABALVER=2.4 HAPPYVER=1.19.5 ALEXVER=3.1.7
+    compiler: ": #GHC 8.6.5"
+    addons: {apt: {packages: [cabal-install-2.4,ghc-8.6.5,happy-1.19.5,alex-3.1.7], sources: [hvr-ghc]}}
 
   # Build with the newest GHC and cabal-install. This is an accepted failure,
   # see below.
@@ -100,6 +103,14 @@ matrix:
     compiler: ": #stack 8.2.2"
     addons: {apt: {packages: [libgmp-dev]}}
 
+  - env: BUILD=stack ARGS="--resolver lts-12"
+    compiler: ": #stack 8.4.4"
+    addons: {apt: {packages: [libgmp-dev]}}
+
+  - env: BUILD=stack ARGS="--resolver lts-14"
+    compiler: ": #stack 8.6.5"
+    addons: {apt: {packages: [libgmp-dev]}}
+
   # Nightly builds are allowed to fail
   - env: BUILD=stack ARGS="--resolver nightly"
     compiler: ": #stack nightly"
@@ -135,6 +146,14 @@ matrix:
     compiler: ": #stack 8.2.2 osx"
     os: osx
 
+  - env: BUILD=stack ARGS="--resolver lts-12"
+    compiler: ": #stack 8.4.4 osx"
+    os: osx
+
+  - env: BUILD=stack ARGS="--resolver lts-14"
+    compiler: ": #stack 8.6.5 osx"
+    os: osx
+
   - env: BUILD=stack ARGS="--resolver nightly"
     compiler: ": #stack nightly osx"
     os: osx
@@ -157,9 +176,9 @@ before_install:
 - |
   if [ `uname` = "Darwin" ]
   then
-    travis_retry curl --insecure -L https://www.stackage.org/stack/osx-x86_64 | tar xz --strip-components=1 --include '*/stack' -C ~/.local/bin
+    travis_retry curl --insecure -L https://get.haskellstack.org/stable/osx-x86_64.tar.gz | tar xz --strip-components=1 --include '*/stack' -C ~/.local/bin
   else
-    travis_retry curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
+    travis_retry curl -L https://get.haskellstack.org/stable/linux-x86_64.tar.gz | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
   fi
 
   # Use the more reliable S3 mirror of Hackage
@@ -176,9 +195,14 @@ install:
   case "$BUILD" in
     stack)
       # Add in extra-deps for older snapshots, as necessary
-      stack --no-terminal --install-ghc $ARGS test --bench --dry-run || ( \
-        stack --no-terminal $ARGS build cabal-install && \
-        stack --no-terminal $ARGS solver --update-config)
+      #
+      # This is disabled by default, as relying on the solver like this can
+      # make builds unreliable. Instead, if you have this situation, it's
+      # recommended that you maintain multiple stack-lts-X.yaml files.
+
+      #stack --no-terminal --install-ghc $ARGS test --bench --dry-run || ( \
+      #  stack --no-terminal $ARGS build cabal-install && \
+      #  stack --no-terminal $ARGS solver --update-config)
 
       # Build the dependencies
       stack --no-terminal --install-ghc $ARGS test --bench --only-dependencies

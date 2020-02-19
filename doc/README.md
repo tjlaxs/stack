@@ -1,4 +1,4 @@
-<div class="hidden-warning"><a href="https://docs.haskellstack.org/"><img src="https://rawgit.com/commercialhaskell/stack/master/doc/img/hidden-warning.svg"></a></div>
+<div class="hidden-warning"><a href="https://docs.haskellstack.org/"><img src="https://cdn.jsdelivr.net/gh/commercialhaskell/stack/doc/img/hidden-warning.svg"></a></div>
 
 # The Haskell Tool Stack
 
@@ -17,7 +17,7 @@ It features:
 
 #### How to install
 
-For many Un*x operating systems, all you need to do is run:
+For most Un*x operating systems, the easiest way to install is to run:
 
     curl -sSL https://get.haskellstack.org/ | sh
 
@@ -26,11 +26,25 @@ or:
     wget -qO- https://get.haskellstack.org/ | sh
 
 On Windows, you can download and install the
-[Windows 64-bit Installer](https://www.stackage.org/stack/windows-x86_64-installer).
+[Windows 64-bit Installer](https://get.haskellstack.org/stable/windows-x86_64-installer.exe).
 
-For detailed instructions and downloads, including many additional
-operating systems, check out the
-[install and upgrade page](install_and_upgrade.md).
+For other operating systems and direct downloads, check out the
+[install and upgrade guide](install_and_upgrade.md).
+
+Note that the [get.haskellstack.org](https://get.haskellstack.org/)
+script will ask for root access using `sudo` in order to use your
+platform's package manager to install dependencies and to install to
+`/usr/local/bin`.  If you prefer more control, follow the manual
+installation instructions in the
+[install and upgrade guide](install_and_upgrade.md).
+
+#### How to upgrade
+
+If you already have `stack` installed, upgrade it to the latest version
+by running:
+
+    stack upgrade
+
 
 #### Quick Start Guide
 
@@ -71,18 +85,21 @@ The `stack new` command should have created the following files:
 
 ```
 .
-├── LICENSE
-├── Setup.hs
 ├── app
 │   └── Main.hs
+├── ChangeLog.md
+├── LICENSE
 ├── my-project.cabal
+├── package.yaml
+├── README.md
+├── Setup.hs
 ├── src
 │   └── Lib.hs
 ├── stack.yaml
 └── test
     └── Spec.hs
 
-    3 directories, 7 files
+    3 directories, 10 files
 ```
 
 So to manage your library:
@@ -95,9 +112,12 @@ So to manage your library:
 2. If you need to include another library (for example the package
    [`text`](https://hackage.haskell.org/package/text)):
 
-   - Add the package `text` to the file `my-project.cabal`
-     in the section `build-depends: ...`.
+   - Add the package `text` to the file `package.yaml`
+     in the section `dependencies: ...`.
    - Run `stack build` another time.
+   - `stack build` will update my-project.cabal for you.
+     If desired you can update the .cabal file manually
+     and stack will use .cabal instead of package.yaml.
 
 3. If you get an error that tells you your package isn't in the LTS.
    Just try to add a new version in the `stack.yaml` file in the `extra-deps` section.
@@ -139,9 +159,9 @@ stack ghci
 λ: :main --stack-root /path/to/root/ --stack-yaml /path/to/stack.yaml COMMAND
 ```
 
-This allows you to set a special stack root (instead of `~/.stack/`) and to
-target your commands at a particular `stack.yaml` instead of the one found in
-the current directory.
+This allows you to set a special stack root (instead of `~/.stack/` or, on
+Windows, `%LOCALAPPDATA%\Programs\stack`) and to target your commands at a
+particular `stack.yaml` instead of the one found in the current directory.
 
 #### Complete guide to stack
 
@@ -191,3 +211,6 @@ project meeting the needs of Haskell users of all stripes.
 If you'd like to get involved with Stack, check out the
 [newcomer friendly](https://github.com/commercialhaskell/stack/issues?q=is%3Aopen+is%3Aissue+label%3a%22newcomer+friendly%22)
 label on the Github issue tracker.
+
+#### How to uninstall
+Removing ``~/.stack`` and ``/usr/local/bin/stack`` should be sufficient. You may want to delete ``.stack-work`` folders in any Haskell projects that you have built.

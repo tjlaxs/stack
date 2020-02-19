@@ -10,6 +10,7 @@ cd "$(dirname "$0")"
 DOCKER_REPO=fpco/stack-build
 PUSH=false
 DRY=false
+VARIANT=build
 
 #
 # Functions
@@ -20,7 +21,7 @@ DRY=false
 usage() {
     echo "$0: $1" >&2
     echo
-    echo "Usage: $0 [--push] [--dry-run] lts-X.Y|lts-X|lts]"
+    echo "Usage: $0 [--push] [--dry-run] [--small] lts-X.Y|lts-X|lts]"
     echo "See README.md for more information."
     echo
     exit 1
@@ -56,6 +57,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         --dry-run)
             DRY=true
+            shift
+            ;;
+        --small)
+            VARIANT=small
+            DOCKER_REPO=fpco/stack-build-small
             shift
             ;;
         -*)
@@ -125,7 +131,9 @@ if [[ -s "$LTS_SLUG/Dockerfile" ]]; then
 
     # If there is an exact match, build and push that image
 
-    dry docker build -t "$DOCKER_REPO:$LTS_SLUG" --build-arg "LTS_SLUG=$LTS_SLUG" $LTS_SLUG
+    sed "s/\\\$DOCKER_REPO/$(echo $DOCKER_REPO|sed 's/\//\\\//')/g" "$LTS_SLUG/Dockerfile" >"$LTS_SLUG/Dockerfile.sub"
+    dry docker build -t "$DOCKER_REPO:$LTS_SLUG" --build-arg "DOCKER_REPO=$DOCKER_REPO" --build-arg "LTS_SLUG=$LTS_SLUG" --build-arg "VARIANT=$VARIANT" -f "$LTS_SLUG/Dockerfile.sub" "$LTS_SLUG"
+    rm -f "$LTS_SLUG/Dockerfile.sub"
     push "$DOCKER_REPO:$LTS_SLUG"
 else
 

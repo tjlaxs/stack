@@ -1,4 +1,4 @@
-<div class="hidden-warning"><a href="https://docs.haskellstack.org/"><img src="https://rawgit.com/commercialhaskell/stack/master/doc/img/hidden-warning.svg"></a></div>
+<div class="hidden-warning"><a href="https://docs.haskellstack.org/"><img src="https://cdn.jsdelivr.net/gh/commercialhaskell/stack/doc/img/hidden-warning.svg"></a></div>
 
 # Nix integration
 
@@ -54,7 +54,7 @@ a version of GHC matching the configured resolver. Enabling Nix
 support means packages will always be built using a GHC available
 inside the shell, rather than your globally installed one if any.
 
-Note that in this mode `stack` can use only GHC versions than have
+Note that in this mode `stack` can use only GHC versions that have
 already been mirrored into the Nix package repository.
 The [Nixpkgs master branch](https://github.com/NixOS/nixpkgs/tree/master/pkgs/development/haskell-modules)
 usually picks up new versions quickly, but it takes two or three
@@ -186,9 +186,10 @@ Here is a commented configuration file, showing the default values:
 ```yaml
 nix:
 
-  # false by default. Must be present and set to `true` to enable Nix.
-  # You can set set it in your `$HOME/.stack/config.yaml` to enable
-  # Nix for all your projects without having to repeat it
+  # false by default. Must be present and set to `true` to enable Nix, except on
+  # NixOS where it is enabled by default (see #3938).  You can set set it in your
+  # `$HOME/.stack/config.yaml` to enable Nix for all your projects without having
+  # to repeat it
   # enable: true
 
   # true by default. Tells Nix whether to run in a pure shell or not.
